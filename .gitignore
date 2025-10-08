@@ -6,6 +6,7 @@ npm-debug.log
 # Environment secrets
 .env
 cookies.txt
+downloadedMusic/
 
 # OS files
 Thumbs.db
