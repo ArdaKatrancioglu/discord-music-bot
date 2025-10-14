@@ -13,6 +13,7 @@ const { spawn, execSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 const { performance } = require('perf_hooks');
+const { url } = require('inspector');
 
 const TOKEN = process.env.TOKEN;
 if (!TOKEN) {
@@ -52,24 +53,70 @@ if (!ffmpegPath) {
   process.exit(1);
 }
 
+/* ----------------------- İsimlendirme yardımcıları ----------------------- */
+function sanitizeTitle(title) {
+  // Unicode normalizasyonu, yasak karakterleri temizle, boşlukları tekilleştir ve _ yap
+  return title
+    .normalize('NFKD')
+    .replace(/[\/\\:*?"<>|]+/g, '')             // Windows yasakları
+    .replace(/[^\w\s\-.()&,'\[\]]+/g, '')       // dosya için güvenli karakter seti
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/\s/g, '_')
+    .slice(0, 120);
+}
+function unsanitizeTitle(filePart) {
+  // Tam geri dönüş garanti edilmez ama görüntüleme için yeterli
+  return filePart.replace(/_/g, ' ').trim();
+}
+function parseCachedMp3Filename(file) {
+  // Yeni biçim:  <id>_<sanitizedTitle>.mp3
+  // Eski biçim:  <title>.mp3  (ID yok)
+  const base = path.basename(file, '.mp3');
+  const m = base.match(/^([A-Za-z0-9_-]{6,})_(.+)$/); // YouTube ID genelde 11 ama esnek bırakalım
+  if (m) {
+    return { id: m[1], titleSan: m[2], title: unsanitizeTitle(m[2]) };
+  }
+  // Legacy: baştan komple başlık
+  return { id: null, titleSan: base, title: unsanitizeTitle(base) };
+}
+function shuffle(arr) {
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = (Math.random() * (i + 1)) | 0;
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+  }
+  return arr;
+}
+
 /* ----------------------- Kalıcı klasörler ----------------------- */
 const downloadsDir = path.join(process.cwd(), 'downloadedMusic');
 if (!fs.existsSync(downloadsDir)) fs.mkdirSync(downloadsDir, { recursive: true });
 
 /* ----------------------- İndirme önbelleği (global) ----------------------- */
-const downloadedTracks = new Map(); // key: id, val: { title, filePath }
+/**
+ * byId:    gerçek video ID → track
+ * byTitle: (sanitize edilmiş) başlık → track  (legacy desteği + başlık tabanlı eşleşme)
+ *
+ * track: { id: string|null, title: string, titleSan: string, filePath: string }
+ */
+const downloadedById = new Map();
+const downloadedByTitle = new Map();
+
 for (const file of fs.readdirSync(downloadsDir)) {
-  if (file.toLowerCase().endsWith('.mp3')) {
-    const id = path.basename(file, '.mp3'); // dosya adı "ID.mp3" varsayımı
-    downloadedTracks.set(id, { title: id, filePath: path.join(downloadsDir, file) });
-  }
+  if (!file.toLowerCase().endsWith('.mp3')) continue;
+  const full = path.join(downloadsDir, file);
+  const { id, titleSan, title } = parseCachedMp3Filename(file);
+  const track = { id, title, titleSan, filePath: full , url};
+  if (id) downloadedById.set(id, track);
+  downloadedByTitle.set(titleSan, track);
 }
-console.log(`[Init] Indexed downloads: ${[...downloadedTracks.keys()]}`);
+const uniqCount = new Set([...downloadedById.values(), ...downloadedByTitle.values()].map(t => t.filePath)).size;
+console.log(`[Init] Indexed downloads: ${uniqCount} file(s)`);
 
 /* ----------------------- Session state (guild-bazlı) ----------------------- */
-// guildId -> { connection, player, queue, currentTrack, lastChannel }
+// guildId -> { connection, player, queue, currentTrack, lastChannel, repeatCache, cachePool }
 const sessions = new Map();
-// userId -> { guildId, channelId } (DM'den !play için varsayılan yönlendirme)
+// userId -> { guildId, channelId }
 const userDefaultVC = new Map();
 
 /* ----------------------- Discord Client ----------------------- */
@@ -78,7 +125,6 @@ const client = new Client({
     GatewayIntentBits.Guilds,
     GatewayIntentBits.GuildVoiceStates,
     GatewayIntentBits.GuildMessages,
-    GatewayIntentBits.MessageContent,
     GatewayIntentBits.MessageContent,
     GatewayIntentBits.DirectMessages
   ],
@@ -105,11 +151,29 @@ function fetchMetadata(input) {
     proc.on('close', code => {
       if (code === 0) {
         const lines = out.trim().split('\n');
-        const id = lines.shift();
-        resolve({ id, title: lines.join(' ') });
+        const id = (lines.shift() || '').trim();
+        const title = (lines.join(' ') || '').trim();
+        resolve({ id, title, url: `https://www.youtube.com/watch?v=${title}` });
       } else reject(new Error(`yt-dlp exited ${code}`));
     });
   });
+}
+
+/* ----------------------- Önbellek yardımcıları ----------------------- */
+function getTrackFromCache({ id, titleSan }) {
+  if (id && downloadedById.has(id)) return downloadedById.get(id);
+  if (titleSan && downloadedByTitle.has(titleSan)) return downloadedByTitle.get(titleSan);
+  return null;
+}
+function addTrackToCache(track) {
+  if (track.id) downloadedById.set(track.id, track, url);
+  downloadedByTitle.set(track.titleSan, track, url);
+}
+function listAllCachedTracksUnique() {
+  const unique = new Map(); // key: filePath
+  for (const t of downloadedByTitle.values()) unique.set(t.filePath, t);
+  for (const t of downloadedById.values()) unique.set(t.filePath, t);
+  return [...unique.values()];
 }
 
 /* ----------------------- Session yardımcıları ----------------------- */
@@ -130,7 +194,7 @@ function ensureSession(guildId, channelId, adapterCreator) {
     });
     const player = createAudioPlayer();
     connection.subscribe(player);
-    session = { connection, player, queue: [], currentTrack: null, lastChannel: null };
+    session = { connection, player, queue: [], currentTrack: null, lastChannel: null, repeatCache: false, cachePool: [] };
     sessions.set(guildId, session);
     attachPlayerEvents(guildId);
   } else if (
@@ -158,6 +222,13 @@ async function playNext(guildId) {
   const channel = session.lastChannel;
 
   if (!session.queue.length) {
+    // Sonsuz cache döngüsü aktifse yeni bir rastgele sıralama besle
+    if (session.repeatCache && session.cachePool?.length) {
+      session.queue = shuffle([...session.cachePool]);
+    }
+  }
+
+  if (!session.queue.length) {
     session.currentTrack = null;
     if (channel?.send) {
       try { await channel.send('🛑 Queue is empty. Add more with !play <song or URL>'); } catch {}
@@ -168,7 +239,10 @@ async function playNext(guildId) {
   const track = session.queue.shift();
   session.currentTrack = track;
   if (channel?.send) {
-    try { await channel.send(`▶️ Now playing: **${track.title}**`); } catch {}
+    try { 
+      const link = track.url ? `\n🔗 ${track.url}` : '';
+      await channel.send(`▶️ Now playing: **${track.title}**${link}`); 
+    } catch {}
   }
   session.player.play(createAudioResource(track.filePath));
 }
@@ -209,7 +283,6 @@ client.on('messageCreate', async message => {
 
     /* ---------- Görüntüleme Komutları (guild/DM fark etmez) ---------- */
     if (content === '!queue') {
-      // Hangi session?
       let guildId = message.guild?.id;
       if (!guildId) {
         const pref = userDefaultVC.get(message.author.id);
@@ -234,7 +307,7 @@ client.on('messageCreate', async message => {
       }
       const session = sessions.get(guildId);
       return session?.currentTrack
-        ? message.reply(`▶️ Now playing: **${session.currentTrack.title}**`)
+        ? message.reply(`▶️ Now playing: **${session.currentTrack.title}**\n🔗 ${session.currentTrack.url || 'URL unknown'}`)
         : message.reply('ℹ️ No track currently playing.');
     }
 
@@ -261,6 +334,8 @@ client.on('messageCreate', async message => {
       const session = sessions.get(guildId);
       if (!session) return message.reply('⚠️ Hiçbir oturum yok.');
       session.queue = [];
+      session.repeatCache = false;  // sonsuz döngüyü de kapat
+      session.cachePool = [];
       session.player.stop(); // Idle -> playNext (boş queue: "Queue is empty" mesajını atar)
       return message.reply('⏹ Stopped playback and cleared queue (cache intact).');
     }
@@ -289,6 +364,56 @@ client.on('messageCreate', async message => {
       if (!session) return message.reply('⚠️ Hiçbir oturum yok.');
       session.player.unpause();
       return message.reply('▶️ Resumed playback.');
+    }
+
+    /* ---------- !cache (sonsuz rastgele çalma) ---------- */
+    if (content === '!cache' || content.startsWith('!cache ')) {
+      const arg = content.split(/\s+/)[1]?.toLowerCase();
+      let targetGuildId, targetChannelId;
+
+      if (message.guild) {
+        const vc = message.member?.voice?.channel;
+        if (!vc) return message.reply('⚠️ Önce bir ses kanalına katıl.');
+        targetGuildId = vc.guild.id;
+        targetChannelId = vc.id;
+        userDefaultVC.set(message.author.id, { guildId: targetGuildId, channelId: targetChannelId });
+      } else {
+        const pref = userDefaultVC.get(message.author.id);
+        if (!pref) {
+          return message.reply(
+            '⚠️ Henüz bir ses kanalı bağlı değil. Bir sunucuda bir ses kanalına katılıp !bind de veya orada !cache çalıştır. ' +
+            '(Alternatif: DM’de !use <guildId> <channelId>)'
+          );
+        }
+        targetGuildId = pref.guildId;
+        targetChannelId = pref.channelId;
+      }
+
+      const guild = client.guilds.cache.get(targetGuildId);
+      if (!guild) return message.reply('❌ Sunucu bulunamadı (botun o sunucuda olması gerek).');
+      const session = ensureSession(targetGuildId, targetChannelId, guild.voiceAdapterCreator);
+      session.lastChannel = message.channel;
+
+      if (arg === 'off') {
+        session.repeatCache = false;
+        session.cachePool = [];
+        return message.reply('🛑 Cache döngüsü devre dışı bırakıldı. (Queue aynı kaldı)');
+      }
+
+      const all = listAllCachedTracksUnique();
+      if (!all.length) return message.reply('ℹ️ Önbellekte çalınacak şarkı yok.');
+
+      session.cachePool = all;
+      session.repeatCache = true;
+      // Mevcut sırayı ezip yeni bir rastgele liste veriyoruz
+      session.queue = shuffle([...all]);
+
+      if (!session.currentTrack) {
+        playNext(targetGuildId);
+        return message.reply(`🔁 Cache (∞) başlatıldı. Parça sayısı: **${all.length}**`);
+      } else {
+        return message.reply(`🔁 Cache (∞) etkin. Sıraya **${all.length}** parça eklendi ve döngü açık.`);
+      }
     }
 
     /* ---------- !play ---------- */
@@ -327,7 +452,7 @@ client.on('messageCreate', async message => {
     // Metin geri bildirim kanalı bu mesajın geldiği kanal olsun
     session.lastChannel = message.channel;
 
-    // Arama/indir & cache
+    // Arama/metadata
     const t0 = performance.now();
     const input = /^(https?:\/\/|www\.)/i.test(query) ? query : `ytsearch1:${query}`;
 
@@ -339,20 +464,19 @@ client.on('messageCreate', async message => {
     }
     const t1 = performance.now();
 
-    // ---- ID-only naming (mevcut mantığı koruyoruz) ----
-    // Not: Bu iki satırda "id/title" takası önceki kodla uyumluluk için bilerek korunmuştur.
-    const title = meta.id;
+    // Doğru eşleştirme: id = gerçek video ID, title = gerçek başlık
     const id = meta.title;
-
-    const filename = `${id}.mp3`;
+    const title = meta.id;
+    const url = meta.url;
+    const titleSan = sanitizeTitle(title);
+    const filename = `${id}_${titleSan}.mp3`;
     const filepath = path.join(downloadsDir, filename);
-
     const t2 = performance.now();
 
-    // Cache kontrolü
-    if (downloadedTracks.has(id)) {
-      const track = downloadedTracks.get(id);
-      if (!track.title || track.title === id) track.title = title; // ilk kez görüyorsak başlığı doldur
+    // Cache kontrolü (id öncelikli, legacy için titleSan da kontrol)
+    const cached = getTrackFromCache({ id, titleSan });
+    if (cached) {
+      const track = cached;
 
       if (!session.currentTrack) {
         session.queue.unshift(track);
@@ -367,7 +491,8 @@ client.on('messageCreate', async message => {
       );
     }
 
-    await message.reply(`⬇️ Downloading **${title}**`);
+    const link = url ? `\n🔗 ${url}` : 'A Problem Occured While Trying To Fetch URL';
+    await message.reply(`⬇️ Downloading **${title}**${link}`);
     const dlStart = performance.now();
 
     const dlArgs = [
@@ -401,13 +526,12 @@ client.on('messageCreate', async message => {
       const dlEnd = performance.now();
 
       if (code === 0) {
-        const track = { title, filePath: filepath };
-        downloadedTracks.set(id, track);
+        const track = { id, title, titleSan, filePath: filepath, url };
+        addTrackToCache(track);
 
         if (!session.currentTrack) {
           session.queue.unshift(track);
           playNext(targetGuildId);
-          await message.reply(`▶️ Now playing: **${track.title}**`);
         } else {
           session.queue.push(track);
           await message.reply(`🔄 Queued: **${track.title}**`);
