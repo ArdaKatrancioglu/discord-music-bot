@@ -500,15 +500,12 @@ client.on('messageCreate', async message => {
       '--ffmpeg-location',
       path.dirname(ffmpegPath) || ffmpegPath,
       '--no-playlist',
-      '--cookies', path.join(process.cwd(), 'cookies.txt'),
-      '-f',
-      'bestaudio',
-      '-x',
-      '--audio-format',
-      'mp3',
-      '-o',
-      filepath,
-      input
+      '--force-ipv4',
+      // '--cookies', path.join(process.cwd(), 'cookies.txt'), // geçici olarak kaldır
+      '-f', 'bestaudio',
+      '-x', '--audio-format', 'mp3',
+      '-o', filepath,
+      url // input değil, meta.url olacak (doğru link)
     ];
 
     if (resolveBinary('aria2c')) {
