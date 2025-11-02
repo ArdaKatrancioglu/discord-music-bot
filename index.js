@@ -495,18 +495,31 @@ client.on('messageCreate', async message => {
     await message.reply(`⬇️ Downloading **${title}**${link}`);
     const dlStart = performance.now();
 
-    const dlArgs = [
-      '--newline',
-      '--ffmpeg-location',
-      path.dirname(ffmpegPath) || ffmpegPath,
-      '--no-playlist',
-      '--force-ipv4',
-      // '--cookies', path.join(process.cwd(), 'cookies.txt'), // geçici olarak kaldır
-      '-f', 'bestaudio',
-      '-x', '--audio-format', 'mp3',
-      '-o', filepath,
-      url // input değil, meta.url olacak (doğru link)
-    ];
+const dlArgs = [
+  '--newline',
+  '--ffmpeg-location', path.dirname(ffmpegPath) || ffmpegPath,
+  '--no-playlist',
+  '--force-ipv4',
+
+  // ⚡ Yeni JS çözücü (Node) desteği
+  '--js-runtimes', 'node',
+
+  // ⚙️ Yeni YouTube client tipi (EJS uyumlu)
+  '--extractor-args', 'youtube:player_client=web_music',
+
+  '--cookies', path.join(process.cwd(), 'cookies.txt'),
+
+  '--add-header', 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
+  '--add-header', 'Accept-Language: en-US,en;q=0.9',
+
+  '-f', 'bestaudio',
+  '-x', '--audio-format', 'mp3',
+  '-o', filepath,
+  url
+];
+
+
+
 
     if (resolveBinary('aria2c')) {
       dlArgs.splice(1, 0, '--downloader', 'aria2c', '--downloader-args', 'aria2c:-x 16 -k 1M');
