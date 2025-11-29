@@ -81,11 +81,29 @@ The project directory structure should be:
 
 ```
 project/
-├── bin/                  # optional local binaries (ffmpeg, yt-dlp)
-├── downloadedMusic/      # automatically created and stores .mp3 files
-├── index.js              # main bot logic
-├── .env                  # your Discord bot token (e.g., TOKEN=your_discord_bot_token_here)
-└── README.md             # documentation
+├── bin/                          # optional: drop ffmpeg / yt-dlp here
+│   ├── ffmpeg.exe
+│   └── yt-dlp.exe
+│
+├── downloadedMusic/              # auto-created, stores MP3 files + index.json
+│   ├── index.json                # persistent track cache
+│   └── <id>_<sanitized>.mp3      # downloaded audio files
+│
+├── binaries.js                   # ffmpeg / yt-dlp resolver
+├── titleUtils.js                 # sanitizing, parsing, shuffle helpers
+├── musicIndex.js                 # persistent MP3 cache manager
+├── sessionManager.js             # voice connections, players, queues
+├── youtubeMetadata.js            # metadata fetcher (yt-dlp flat)
+├── playlistUtils.js              # playlist detection + playlist feeder launcher
+├── commandHandler.js             # ALL bot commands (!play, !stop, etc.)
+│
+├── playlist_scraper.js           # extracts playlist track list (URL → items[])
+├── playlist_feeder.js            # feeds playlist items to queue every X seconds
+│
+├── index.js                      # entry point (minimal bootstrapping)
+├── .env                          # TOKEN=your_discord_bot_token_here
+└── README.md                     # this file
+
 ```
 
 
