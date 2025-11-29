@@ -14,10 +14,13 @@ const fs = require('fs');
 const path = require('path');
 const { performance } = require('perf_hooks');
 const { url } = require('inspector');
+const { getPlaylistTracks } = require('./playlist_scraper');
+const { startPlaylistFeeder, stopPlaylistFeeder } = require('./playlist_feeder');
+
 
 const TOKEN = process.env.TOKEN;
 if (!TOKEN) {
-  console.error('TOKEN yok. .env dosyasına TOKEN=... ekleyin.');
+  console.error('TOKEN is missing. Add TOKEN=... to .env file.');
   process.exit(1);
 }
 
@@ -45,11 +48,11 @@ const ffmpegPath = resolveBinary('ffmpeg');
 const ytDlpPath = resolveBinary('yt-dlp') || resolveBinary('yt_dlp');
 
 if (!ytDlpPath) {
-  console.error('yt-dlp bulunamadı. PATH’e ekleyin veya bin/yt-dlp.exe olarak yanına koyun.');
+  console.error('yt-dlp not found. Add it to PATH or place it next to it as bin/yt-dlp.exe.');
   process.exit(1);
 }
 if (!ffmpegPath) {
-  console.error('ffmpeg bulunamadı. PATH’e ekleyin veya bin/ffmpeg.exe olarak yanına koyun.');
+  console.error('ffmpeg not found. Add it to PATH or place it next to it as bin/ffmpeg.exe.');
   process.exit(1);
 }
 
@@ -88,6 +91,73 @@ function shuffle(arr) {
   return arr;
 }
 
+async function detectIfPlaylist(url) {
+  return new Promise((resolve, reject) => {
+    const args = [
+      '--flat-playlist',
+      '--print', '%(id)s',
+      url
+    ];
+
+    const proc = spawn(ytDlpPath, args);
+
+    let out = '';
+    proc.stdout.setEncoding('utf8');
+    proc.stdout.on('data', d => out += d);
+
+    proc.on('close', code => {
+      if (code !== 0) return resolve(false);
+
+      const lines = out.trim().split(/\r?\n/).filter(Boolean);
+
+      if (lines.length > 1) resolve(true);   // playlist
+      else resolve(false);                   // normal video
+    });
+
+    proc.on('error', reject);
+  });
+}
+
+async function handlePlaylist(message, url) {
+    const vc = message.member?.voice?.channel;
+    if (!vc) return message.reply('Ses kanalına gir.');
+
+    let guildId = vc.guild.id;
+    let channelId = vc.id;
+
+    const guild = client.guilds.cache.get(guildId);
+    const session = ensureSession(guildId, channelId, guild.voiceAdapterCreator);
+    session.lastChannel = message.channel;
+
+    await message.reply("⏳ Playlist çekiliyor...");
+
+    let list;
+    try {
+        list = await getPlaylistTracks(url);
+    } catch (e) {
+        console.error(e);
+        return message.reply("❌ Playlist okunamadı.");
+    }
+
+    await message.reply(`📜 Playlist bulundu. Parça: **${list.length}**\nBaşlatılıyor...`);
+
+    const pushFn = async (track, guildId, channel) => {
+        const query = track.url;
+
+        try {
+            await channel.send(`➕ Queue: **${track.title}**`);
+            message.content = `!play ${query}`;
+            client.emit("messageCreate", message);
+        } catch (err) {
+            console.error("Ekleme hatası:", err);
+        }
+    };
+
+    startPlaylistFeeder(guildId, message.channel, list, pushFn, 30000);
+}
+
+
+
 /* ----------------------- Kalıcı klasörler ----------------------- */
 const downloadsDir = path.join(process.cwd(), 'downloadedMusic');
 if (!fs.existsSync(downloadsDir)) fs.mkdirSync(downloadsDir, { recursive: true });
@@ -113,7 +183,7 @@ function loadIndex() {
       if (obj && Array.isArray(obj.tracks)) return obj;
     }
   } catch (e) {
-    console.warn('[Init] index.json okunamadı, yeniden oluşturulacak:', e.message);
+    console.warn('[Init] Could not read index.json, will be recreated:', e.message);
   }
   return { version: 1, tracks: [] };
 }
@@ -122,7 +192,7 @@ function saveIndex(idx) {
   try {
     fs.writeFileSync(indexPath, JSON.stringify(idx, null, 2), 'utf8');
   } catch (e) {
-    console.warn('[Index] index.json yazılamadı:', e.message);
+    console.warn('[Index] Could not write index.json:', e.message);
   }
 }
 
@@ -310,29 +380,29 @@ client.on('messageCreate', async message => {
     /* ---------- Bağla/Çöz ---------- */
     if (content === '!bind') {
       if (!message.guild)
-        return message.reply('Bu komutu bir sunucu içinde, bir ses kanalındayken çalıştır.');
+        return message.reply('Run this command while on a voice channel within a server stupid fuck.');
       const vc = message.member?.voice?.channel;
-      if (!vc) return message.reply('Önce bir ses kanalına katıl.');
+      if (!vc) return message.reply('Where you at? Nowhere. Join a voice channel first you dumb fuck');
       userDefaultVC.set(message.author.id, { guildId: vc.guild.id, channelId: vc.id });
-      return message.reply(`🔗 DM komutların **${vc.guild.name} › ${vc.name}** kanalına bağlandı.`);
+      return message.reply(`🔗 DM commands are connected to channel **${vc.guild.name} › ${vc.name}**.`);
     }
 
     if (content === '!unbind') {
       userDefaultVC.delete(message.author.id);
-      return message.reply('🔓 DM bağın temizlendi.');
+      return message.reply('🔓 Your DM link has been cleared.');
     }
 
     // DM'den elle hedef verme: !use <guildId> <channelId>
     if (content.startsWith('!use ')) {
       const parts = content.split(/\s+/);
-      if (parts.length !== 3) return message.reply('Kullanım: !use <guildId> <channelId>');
+      if (parts.length !== 3) return message.reply('Error! Unknown format.\nExpected format: !use <guildId> <channelId>');
       const [, gId, cId] = parts;
       const guild = client.guilds.cache.get(gId);
-      if (!guild) return message.reply('Bot o sunucuda değil ya da önbellekte yok.');
+      if (!guild) return message.reply('The bot is not on that server or is not cached.');
       const ch = guild.channels.cache.get(cId);
-      if (!ch || ch.type !== 2) return message.reply('Geçerli bir ses kanalı ID ver.');
+      if (!ch || ch.type !== 2) return message.reply('Provide a valid voice channel ID dumbass.');
       userDefaultVC.set(message.author.id, { guildId: gId, channelId: cId });
-      return message.reply(`🔗 DM komutların **${guild.name} › ${ch.name}** kanalına bağlandı.`);
+      return message.reply(`🔗 DM commands are linked to channel **${guild.name} › ${ch.name}**.`);
     }
 
     /* ---------- Görüntüleme Komutları (guild/DM fark etmez) ---------- */
@@ -340,7 +410,7 @@ client.on('messageCreate', async message => {
       let guildId = message.guild?.id;
       if (!guildId) {
         const pref = userDefaultVC.get(message.author.id);
-        if (!pref) return message.reply('ℹ️ Queue yok (bağlı bir ses kanalı da bulunamadı).');
+        if (!pref) return message.reply('ℹ️ No queue (no connected voice channel found complete retard).');
         guildId = pref.guildId;
       }
       const session = sessions.get(guildId);
@@ -356,7 +426,7 @@ client.on('messageCreate', async message => {
       let guildId = message.guild?.id;
       if (!guildId) {
         const pref = userDefaultVC.get(message.author.id);
-        if (!pref) return message.reply('ℹ️ No track currently playing.');
+        if (!pref) return message.reply('ℹ️ No track currently playing. Want some? Play it then dumbfuck.');
         guildId = pref.guildId;
       }
       const session = sessions.get(guildId);
@@ -369,7 +439,7 @@ client.on('messageCreate', async message => {
       let guildId = message.guild?.id;
       if (!guildId) {
         const pref = userDefaultVC.get(message.author.id);
-        if (!pref) return message.reply('⚠️ Hiçbir oturum yok.');
+        if (!pref) return message.reply('⚠️ There are no sessions.');
         guildId = pref.guildId;
       }
       const session = sessions.get(guildId);
@@ -382,27 +452,34 @@ client.on('messageCreate', async message => {
       let guildId = message.guild?.id;
       if (!guildId) {
         const pref = userDefaultVC.get(message.author.id);
-        if (!pref) return message.reply('⚠️ Hiçbir oturum yok.');
+        if (!pref) return message.reply('⚠️ There are no sessions.');
         guildId = pref.guildId;
       }
+
+      // ❗❗ Playlist feeder'ı burada durduruyoruz
+      stopPlaylistFeeder(guildId);
+
       const session = sessions.get(guildId);
-      if (!session) return message.reply('⚠️ Hiçbir oturum yok.');
+      if (!session) return message.reply('⚠️ There are no sessions.');
+
       session.queue = [];
-      session.repeatCache = false;  // sonsuz döngüyü de kapat
+      session.repeatCache = false;
       session.cachePool = [];
-      session.player.stop(); // Idle -> playNext (boş queue: "Queue is empty" mesajını atar)
-      return message.reply('⏹ Stopped playback and cleared queue (cache intact).');
+      session.player.stop();
+
+      return message.reply('⏹ Stopped playback, cleared queue and stopped playlist feeder.');
     }
+
 
     if (content === '!pause') {
       let guildId = message.guild?.id;
       if (!guildId) {
         const pref = userDefaultVC.get(message.author.id);
-        if (!pref) return message.reply('⚠️ Hiçbir oturum yok.');
+        if (!pref) return message.reply('⚠️ There are no sessions.');
         guildId = pref.guildId;
       }
       const session = sessions.get(guildId);
-      if (!session) return message.reply('⚠️ Hiçbir oturum yok.');
+      if (!session) return message.reply('⚠️ There are no sessions.');
       session.player.pause();
       return message.reply('⏸ Paused playback.');
     }
@@ -411,11 +488,11 @@ client.on('messageCreate', async message => {
       let guildId = message.guild?.id;
       if (!guildId) {
         const pref = userDefaultVC.get(message.author.id);
-        if (!pref) return message.reply('⚠️ Hiçbir oturum yok.');
+        if (!pref) return message.reply('⚠️ There are no sessions.');
         guildId = pref.guildId;
       }
       const session = sessions.get(guildId);
-      if (!session) return message.reply('⚠️ Hiçbir oturum yok.');
+      if (!session) return message.reply('⚠️ There are no sessions.');
       session.player.unpause();
       return message.reply('▶️ Resumed playback.');
     }
@@ -427,7 +504,7 @@ client.on('messageCreate', async message => {
 
       if (message.guild) {
         const vc = message.member?.voice?.channel;
-        if (!vc) return message.reply('⚠️ Önce bir ses kanalına katıl.');
+        if (!vc) return message.reply('⚠️ Where you at? Nowhere. Join a voice channel first you dumb fuck');
         targetGuildId = vc.guild.id;
         targetChannelId = vc.id;
         userDefaultVC.set(message.author.id, { guildId: targetGuildId, channelId: targetChannelId });
@@ -435,8 +512,8 @@ client.on('messageCreate', async message => {
         const pref = userDefaultVC.get(message.author.id);
         if (!pref) {
           return message.reply(
-            '⚠️ Henüz bir ses kanalı bağlı değil. Bir sunucuda bir ses kanalına katılıp !bind de veya orada !cache çalıştır. ' +
-            '(Alternatif: DM’de !use <guildId> <channelId>)'
+            '⚠️ No voice channel is connected yet dumbass. Join a voice channel on a server and !bind it or run !cache there. ' +
+            '(Alternative: !use <guildId> <channelId> in DM)'
           );
         }
         targetGuildId = pref.guildId;
@@ -444,18 +521,18 @@ client.on('messageCreate', async message => {
       }
 
       const guild = client.guilds.cache.get(targetGuildId);
-      if (!guild) return message.reply('❌ Sunucu bulunamadı (botun o sunucuda olması gerek).');
+      if (!guild) return message.reply('❌ Server not found (bot must be on that server).');
       const session = ensureSession(targetGuildId, targetChannelId, guild.voiceAdapterCreator);
       session.lastChannel = message.channel;
 
       if (arg === 'off') {
         session.repeatCache = false;
         session.cachePool = [];
-        return message.reply('🛑 Cache döngüsü devre dışı bırakıldı. (Queue aynı kaldı)');
+        return message.reply('🛑 Cache loop disabled. (Queue remains the same)');
       }
 
       const all = listAllCachedTracksUnique();
-      if (!all.length) return message.reply('ℹ️ Önbellekte çalınacak şarkı yok.');
+      if (!all.length) return message.reply('ℹ️ There are no songs in the cache to play. Play some songs to cache it bitch. Jkjk');
 
       session.cachePool = all;
       session.repeatCache = true;
@@ -464,11 +541,18 @@ client.on('messageCreate', async message => {
 
       if (!session.currentTrack) {
         playNext(targetGuildId);
-        return message.reply(`🔁 Cache (∞) başlatıldı. Parça sayısı: **${all.length}**`);
+        return message.reply(`🔁 Cache initialized. Number of parts: **${all.length}**`);
       } else {
-        return message.reply(`🔁 Cache (∞) etkin. Sıraya **${all.length}** parça eklendi ve döngü açık.`);
+        return message.reply(`🔁 Cache (∞) is enabled. **${all.length}** tracks have been added to the queue and looping is on.`);
       }
     }
+
+    if (content.startsWith('!playlist ')) {
+      const url = content.slice('!playlist '.length).trim();
+      return handlePlaylist(message, url);
+    }
+
+
 
     /* ---------- !play ---------- */
     if (!content.startsWith('!play ')) return;
@@ -476,11 +560,27 @@ client.on('messageCreate', async message => {
     const query = content.slice(6).trim();
     await message.reply(`🎵 Request: ${query}`);
 
+    /* -----------------------------------------
+    * PLAYLIST OTOMATİK TESPİT
+    * ----------------------------------------- */
+    if (/youtube\.com|youtu\.be/.test(query)) {
+        try {
+            const isPlaylist = await detectIfPlaylist(query);
+
+            if (isPlaylist) {
+              await message.reply("📃 Playlist algılandı. Playlist moduna geçiyorum...");
+              return handlePlaylist(message, query);
+            }
+        } catch (e) {
+            console.error("Playlist kontrol hatası:", e);
+        }
+    }
+
     // Hedef guild/channel belirle
     let targetGuildId, targetChannelId;
     if (message.guild) {
       const vc = message.member?.voice?.channel;
-      if (!vc) return message.reply('⚠️ Önce bir ses kanalına katıl.');
+      if (!vc) return message.reply('⚠️ Where you at? Nowhere. Join a voice channel first you dumb fuck');
       targetGuildId = vc.guild.id;
       targetChannelId = vc.id;
 
@@ -490,8 +590,8 @@ client.on('messageCreate', async message => {
       const pref = userDefaultVC.get(message.author.id);
       if (!pref) {
         return message.reply(
-          '⚠️ Henüz bir ses kanalı bağlı değil. Bir sunucuda bir ses kanalına katılıp !bind de veya orada !play çalıştır. ' +
-          '(Alternatif: DM’de !use <guildId> <channelId>)'
+          '⚠️ No voice channel is connected yet. Join a voice channel on a server and !bind it or run !play there. ' +
+          '(Alternative: !use <guildId> <channelId> in DM)'
         );
       }
       targetGuildId = pref.guildId;
@@ -500,7 +600,7 @@ client.on('messageCreate', async message => {
 
     // Session al/oluştur (guild-bazlı)
     const guild = client.guilds.cache.get(targetGuildId);
-    if (!guild) return message.reply('❌ Sunucu bulunamadı (botun o sunucuda olması gerek).');
+    if (!guild) return message.reply('❌ Server not found (bot must be on that server).');
     const session = ensureSession(targetGuildId, targetChannelId, guild.voiceAdapterCreator);
 
     // Metin geri bildirim kanalı bu mesajın geldiği kanal olsun
@@ -549,28 +649,37 @@ client.on('messageCreate', async message => {
     await message.reply(`⬇️ Downloading **${title}**${link}`);
     const dlStart = performance.now();
 
+const cookiesPath = path.join(process.cwd(), 'cookies.txt');
+const hasCookies = fs.existsSync(cookiesPath) && fs.statSync(cookiesPath).size > 0;
+const poToken = process.env.YT_PO_TOKEN; // opsiyonel: sadece mweb + GVS için
+
+const playerClient = hasCookies ? 'mweb' : 'ios';
+const extractorArg =
+  hasCookies && poToken
+    ? `youtube:player_client=${playerClient};po_token=${playerClient}.gvs+${poToken}`
+    : `youtube:player_client=${playerClient}`;
+
 const dlArgs = [
   '--newline',
   '--ffmpeg-location', path.dirname(ffmpegPath) || ffmpegPath,
   '--no-playlist',
   '--force-ipv4',
-
-  // ⚡ Yeni JS çözücü (Node) desteği
   '--js-runtimes', 'node',
-
-  // ⚙️ Yeni YouTube client tipi (EJS uyumlu)
-  '--extractor-args', 'youtube:player_client=web_music',
-
-  '--cookies', path.join(process.cwd(), 'cookies.txt'),
-
-  '--add-header', 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
-  '--add-header', 'Accept-Language: en-US,en;q=0.9',
-
-  '-f', 'bestaudio',
+  '--extractor-args', extractorArg,
+  '-f', 'ba/bestaudio/best',
   '-x', '--audio-format', 'mp3',
   '-o', filepath,
   url
 ];
+
+// cookies sadece destekleyen client'ta ver
+if (hasCookies) {
+  dlArgs.push('--cookies', cookiesPath);
+}
+
+
+
+
 
     if (resolveBinary('aria2c')) {
       dlArgs.splice(1, 0, '--downloader', 'aria2c', '--downloader-args', 'aria2c:-x 16 -k 1M');
@@ -621,7 +730,7 @@ const dlArgs = [
     });
   } catch (err) {
     console.error('[messageCreate] Handler error:', err);
-    try { await message.reply('⚠️ Beklenmeyen bir hata oluştu. (loglara bak)'); } catch {}
+    try { await message.reply('⚠️ An unexpected error occurred. What have you done?'); } catch {}
   }
 });
 
