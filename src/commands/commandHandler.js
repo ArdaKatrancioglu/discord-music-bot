@@ -260,7 +260,7 @@ async function handleMessage(client, message) {
     const title = meta.id;
     const url = meta.url;
     const titleSan = sanitizeTitle(title);
-    const filename = `${id}_${titleSan}.mp3`;
+    const filename = `${id}_${titleSan}.webm`;
     const filepath = path.join(downloadsDir, filename);
     const t2 = performance.now();
 
@@ -303,8 +303,7 @@ async function handleMessage(client, message) {
       '--force-ipv4',
       '--js-runtimes', 'node',
       '--extractor-args', extractorArg,
-      '-f', 'ba/bestaudio/best',
-      '-x', '--audio-format', 'mp3',
+      '-f', 'bestaudio[ext=webm]/bestaudio/best',
       '-o', filepath,
       url
     ];

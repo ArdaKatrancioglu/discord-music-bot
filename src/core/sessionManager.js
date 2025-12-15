@@ -6,6 +6,7 @@ const {
   AudioPlayerStatus
 } = require('@discordjs/voice');
 const { shuffle } = require('../utils/titleUtils');
+const { StreamType } = require('@discordjs/voice');
 
 const sessions = new Map();      // guildId -> { connection, player, queue, currentTrack, lastChannel, repeatCache, cachePool }
 const userDefaultVC = new Map(); // userId  -> { guildId, channelId }
@@ -86,7 +87,13 @@ async function playNext(guildId) {
       await channel.send(`▶️ Now playing: **${track.title}**${link}`);
     } catch {}
   }
-  session.player.play(createAudioResource(track.filePath));
+  const isWebm = track.filePath.endsWith('.webm');
+
+  session.player.play(
+    createAudioResource(track.filePath, {
+      inputType: isWebm ? StreamType.WebmOpus : StreamType.Arbitrary
+    })
+  );
 }
 
 function destroyAllConnections() {
