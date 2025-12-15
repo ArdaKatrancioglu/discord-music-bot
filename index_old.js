@@ -14,8 +14,8 @@ const fs = require('fs');
 const path = require('path');
 const { performance } = require('perf_hooks');
 const { url } = require('inspector');
-const { getPlaylistTracks } = require('./playlist_scraper');
-const { startPlaylistFeeder, stopPlaylistFeeder } = require('./playlist_feeder');
+const { getPlaylistTracks } = require('./src/core/playlist_scraper');
+const { startPlaylistFeeder, stopPlaylistFeeder } = require('./src/core/playlist_feeder');
 
 
 const TOKEN = process.env.TOKEN;

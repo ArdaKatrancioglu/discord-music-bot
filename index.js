@@ -4,8 +4,8 @@ const sodium = require('libsodium-wrappers');
 const { generateDependencyReport } = require('@discordjs/voice');
 const { Client, GatewayIntentBits, Partials } = require('discord.js');
 
-const { handleMessage } = require('./commandHandler');
-const { destroyAllConnections } = require('./sessionManager');
+const { handleMessage } = require('./src/commands/commandHandler');
+const { destroyAllConnections } = require('./src/core/sessionManager');
 
 const TOKEN = process.env.TOKEN;
 if (!TOKEN) {

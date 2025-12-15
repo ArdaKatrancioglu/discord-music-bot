@@ -1,9 +1,9 @@
 // playlistUtils.js
 const { spawn } = require('child_process');
-const { ytDlpPath } = require('./binaries');
-const { getPlaylistTracks } = require('./playlist_scraper');
-const { startPlaylistFeeder } = require('./playlist_feeder');
-const { ensureSession } = require('./sessionManager');
+const { ytDlpPath } = require('../core/binaries');
+const { getPlaylistTracks } = require('../core/playlist_scraper');
+const { startPlaylistFeeder } = require('../core/playlist_feeder');
+const { ensureSession } = require('../core/sessionManager');
 
 async function detectIfPlaylist(url) {
   return new Promise((resolve, reject) => {

@@ -1,7 +1,7 @@
 // musicIndex.js
 const fs = require('fs');
 const path = require('path');
-const { parseCachedMp3Filename } = require('./titleUtils');
+const { parseCachedMp3Filename } = require('../utils/titleUtils');
 
 /**
  * JSON dosyası: downloadedMusic/index.json

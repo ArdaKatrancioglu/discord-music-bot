@@ -5,7 +5,7 @@ const {
   createAudioResource,
   AudioPlayerStatus
 } = require('@discordjs/voice');
-const { shuffle } = require('./titleUtils');
+const { shuffle } = require('../utils/titleUtils');
 
 const sessions = new Map();      // guildId -> { connection, player, queue, currentTrack, lastChannel, repeatCache, cachePool }
 const userDefaultVC = new Map(); // userId  -> { guildId, channelId }

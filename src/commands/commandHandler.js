@@ -3,23 +3,23 @@ const fs = require('fs');
 const path = require('path');
 const { performance } = require('perf_hooks');
 
-const { resolveBinary, ffmpegPath, ytDlpPath } = require('./binaries');
-const { sanitizeTitle } = require('./titleUtils');
+const { resolveBinary, ffmpegPath, ytDlpPath } = require('../core/binaries');
+const { sanitizeTitle } = require('../utils/titleUtils');
 const {
   downloadsDir,
   getTrackFromCache,
   addTrackToCache,
   listAllCachedTracksUnique
-} = require('./musicIndex');
+} = require('../core/musicIndex');
 const {
   sessions,
   userDefaultVC,
   ensureSession,
   playNext
-} = require('./sessionManager');
-const { fetchMetadata } = require('./youtubeMetadata');
-const { detectIfPlaylist, handlePlaylist } = require('./playlistUtils');
-const { stopPlaylistFeeder } = require('./playlist_feeder');
+} = require('../core/sessionManager');
+const { fetchMetadata } = require('../core/youtubeMetadata');
+const { detectIfPlaylist, handlePlaylist } = require('../utils/playlistUtils');
+const { stopPlaylistFeeder } = require('../core/playlist_feeder');
 
 async function handleMessage(client, message) {
   try {
@@ -184,7 +184,7 @@ async function handleMessage(client, message) {
 
       session.cachePool = all;
       session.repeatCache = true;
-      session.queue = require('./titleUtils').shuffle([...all]);
+      session.queue = require('../utils/titleUtils').shuffle([...all]);
 
       if (!session.currentTrack) {
         playNext(targetGuildId);
