@@ -81,28 +81,32 @@ The project directory structure should be:
 
 ```
 project/
-├── bin/                          # optional: drop ffmpeg / yt-dlp here
-│   ├── ffmpeg.exe
-│   └── yt-dlp.exe
+├── downloadedMusic/                  # Auto-created: downloaded MP3s + persistent index
+│   ├── index.json                    # Cached track metadata (id, title, filename, etc.)
+│   └── <id>_<sanitized>.mp3          # Downloaded audio files
 │
-├── downloadedMusic/              # auto-created, stores MP3 files + index.json
-│   ├── index.json                # persistent track cache
-│   └── <id>_<sanitized>.mp3      # downloaded audio files
+├── node_modules/                     # Node dependencies
 │
-├── binaries.js                   # ffmpeg / yt-dlp resolver
-├── titleUtils.js                 # sanitizing, parsing, shuffle helpers
-├── musicIndex.js                 # persistent MP3 cache manager
-├── sessionManager.js             # voice connections, players, queues
-├── youtubeMetadata.js            # metadata fetcher (yt-dlp flat)
-├── playlistUtils.js              # playlist detection + playlist feeder launcher
-├── commandHandler.js             # ALL bot commands (!play, !stop, etc.)
+├── src/
+│   ├── commands/
+│   │   └── commandHandler.js         # All Discord commands (!play, !stop, !skip, etc.)
+│   │
+│   ├── core/
+│   │   ├── binaries.js               # Platform-aware ffmpeg / yt-dlp resolver
+│   │   ├── musicIndex.js             # Persistent MP3 cache & index manager
+│   │   ├── playlist_feeder.js        # Feeds playlist items into queue over time
+│   │   ├── playlist_scraper.js       # Extracts playlist items (URL → track list)
+│   │   ├── sessionManager.js         # Voice sessions, players, queues
+│   │   └── youtubeMetadata.js        # Metadata fetcher (yt-dlp flat extraction)
+│   │
+│   ├── utils/
+│       ├── playlistUtils.js          # Playlist detection & helper utilities
+│       └── titleUtils.js             # Title sanitizing, parsing, filename helpers
+│   
+├── index.js                          # Application entry point (bot bootstrap)
 │
-├── playlist_scraper.js           # extracts playlist track list (URL → items[])
-├── playlist_feeder.js            # feeds playlist items to queue every X seconds
-│
-├── index.js                      # entry point (minimal bootstrapping)
-├── .env                          # TOKEN=your_discord_bot_token_here
-└── README.md                     # this file
+├── .env                              # Environment variables (DISCORD_TOKEN, etc.)
+└── README.md
 
 ```
 
