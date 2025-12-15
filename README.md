@@ -85,8 +85,6 @@ project/
 │   ├── index.json                    # Cached track metadata (id, title, filename, etc.)
 │   └── <id>_<sanitized>.mp3          # Downloaded audio files
 │
-├── node_modules/                     # Node dependencies
-│
 ├── src/
 │   ├── commands/
 │   │   └── commandHandler.js         # All Discord commands (!play, !stop, !skip, etc.)
