@@ -3,6 +3,11 @@ const fs = require('fs');
 const path = require('path');
 const { performance } = require('perf_hooks');
 
+// üst kısma ekle
+const BLACKLIST = new Set([
+  '612376795462762510', // engellenecek user id
+]);
+
 const { resolveBinary, ffmpegPath, ytDlpPath } = require('../core/binaries');
 const { sanitizeTitle } = require('../utils/titleUtils');
 const {
@@ -25,6 +30,10 @@ async function handleMessage(client, message) {
   try {
     if (message.author.bot) return;
     const content = message.content.trim();
+
+    // if (BLACKLIST.has(message.author.id)) {
+    //   return message.reply('yarrami ye tms');
+    // }
 
     /* ---------- Bağla/Çöz ---------- */
     if (content === '!bind') {
@@ -84,7 +93,7 @@ async function handleMessage(client, message) {
         : message.reply('ℹ️ No track currently playing.');
     }
 
-    if (content === '!skip') {
+    if (content === 's' || content === "sikip" || content === "skips" || content === "sikips") {
       let guildId = message.guild?.id;
       if (!guildId) {
         const pref = userDefaultVC.get(message.author.id);
@@ -97,7 +106,7 @@ async function handleMessage(client, message) {
       return message.reply(`⏭ Skipped **${session.currentTrack.title}**`);
     }
 
-    if (content === '!stop') {
+    if (content === 'ss') {
       let guildId = message.guild?.id;
       if (!guildId) {
         const pref = userDefaultVC.get(message.author.id);
@@ -119,7 +128,7 @@ async function handleMessage(client, message) {
       return message.reply('⏹ Stopped playback, cleared queue and stopped playlist feeder.');
     }
 
-    if (content === '!pause') {
+    if (content === 'pp') {
       let guildId = message.guild?.id;
       if (!guildId) {
         const pref = userDefaultVC.get(message.author.id);
@@ -132,7 +141,7 @@ async function handleMessage(client, message) {
       return message.reply('⏸ Paused playback.');
     }
 
-    if (content === '!resume') {
+    if (content === '!resume' || content === 'res') {
       let guildId = message.guild?.id;
       if (!guildId) {
         const pref = userDefaultVC.get(message.author.id);
@@ -146,7 +155,7 @@ async function handleMessage(client, message) {
     }
 
     /* ---------- !cache (sonsuz rastgele çalma) ---------- */
-    if (content === '!cache' || content.startsWith('!cache ')) {
+    if (content === '!cache' || content.startsWith('!cache ') || content == "c") {
       const arg = content.split(/\s+/)[1]?.toLowerCase();
       let targetGuildId, targetChannelId;
 
@@ -200,9 +209,9 @@ async function handleMessage(client, message) {
     }
 
     /* ---------- !play ---------- */
-    if (!content.startsWith('!play ')) return;
+    if (!content.startsWith('p ')) return;
 
-    const query = content.slice(6).trim();
+    const query = content.slice(2).trim();
     await message.reply(`🎵 Request: ${query}`);
 
     /* -------- Playlist otomatik tespit -------- */
