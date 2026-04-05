@@ -3,6 +3,40 @@ const fs = require('fs');
 const path = require('path');
 const { performance } = require('perf_hooks');
 
+/* ---------- Player Control Helpers ---------- */
+function pauseSession(session) {
+  session.player.pause();
+  session.isPaused = true;
+}
+
+function resumeSession(session) {
+  try { session.player.unpause(); } catch {}
+  session.isPaused = false;
+}
+
+function stopSession(session) {
+  session.queue = [];
+  session.repeatCache = false;
+  session.cachePool = [];
+  try { session.player.stop(); } catch {}
+  session.currentTrack = null;
+  session.isPaused = false;
+}
+
+function skipSession(session) {
+  if (!session.currentTrack) return null;
+
+  const skippedTitle = session.currentTrack.title;
+
+  try { session.player.unpause(); } catch {}
+  session.isPaused = false;
+
+  session.currentTrack = null;
+  session.player.stop();
+
+  return skippedTitle;
+}
+
 // üst kısma ekle
 const BLACKLIST = new Set([
   '612376795462762510', // engellenecek user id
@@ -102,17 +136,9 @@ async function handleMessage(client, message) {
       }
       const session = sessions.get(guildId);
       if (!session || !session.currentTrack) return message.reply('⚠️ Nothing to skip.');
-      // ensure player is not paused before stopping
-      try {
-            session.player.unpause();
-      } catch {}
-      session.isPaused = false;
 
-      const skippedTitle = session.currentTrack?.title;
-
-      session.currentTrack = null;
-      session.player.stop();
-      return message.reply(`⏭ Skipped **${skippedTitle || ''}**`);
+      const skipped = skipSession(session);
+      return message.reply(`⏭ Skipped **${skipped || ''}**`);
     }
 
     if (content === 'ss') {
@@ -123,17 +149,12 @@ async function handleMessage(client, message) {
         guildId = pref.guildId;
       }
 
-      // Playlist feeder'ı durdur
       stopPlaylistFeeder(guildId);
 
       const session = sessions.get(guildId);
       if (!session) return message.reply('⚠️ There are no sessions.');
 
-      session.queue = [];
-      session.repeatCache = false;
-      session.cachePool = [];
-      session.player.stop();
-      session.currentTrack = null;
+      stopSession(session);
 
       return message.reply('⏹ Stopped playback, cleared queue and stopped playlist feeder.');
     }
@@ -147,8 +168,8 @@ async function handleMessage(client, message) {
       }
       const session = sessions.get(guildId);
       if (!session) return message.reply('⚠️ There are no sessions.');
-      session.player.pause();
-      session.isPaused = true;
+
+      pauseSession(session);
       return message.reply('⏸ Paused playback.');
     }
 
@@ -161,8 +182,8 @@ async function handleMessage(client, message) {
       }
       const session = sessions.get(guildId);
       if (!session) return message.reply('⚠️ There are no sessions.');
-      session.player.unpause();
-      session.isPaused = false;
+
+      resumeSession(session);
       return message.reply('▶️ Resumed playback.');
     }
 
