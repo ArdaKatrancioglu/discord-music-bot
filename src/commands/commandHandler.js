@@ -102,8 +102,17 @@ async function handleMessage(client, message) {
       }
       const session = sessions.get(guildId);
       if (!session || !session.currentTrack) return message.reply('⚠️ Nothing to skip.');
-      session.player.stop(); // Idle -> playNext
-      return message.reply(`⏭ Skipped **${session.currentTrack.title}**`);
+      // ensure player is not paused before stopping
+      try {
+            session.player.unpause();
+      } catch {}
+      session.isPaused = false;
+
+      const skippedTitle = session.currentTrack?.title;
+
+      session.currentTrack = null;
+      session.player.stop();
+      return message.reply(`⏭ Skipped **${skippedTitle || ''}**`);
     }
 
     if (content === 'ss') {
@@ -124,6 +133,7 @@ async function handleMessage(client, message) {
       session.repeatCache = false;
       session.cachePool = [];
       session.player.stop();
+      session.currentTrack = null;
 
       return message.reply('⏹ Stopped playback, cleared queue and stopped playlist feeder.');
     }
@@ -138,6 +148,7 @@ async function handleMessage(client, message) {
       const session = sessions.get(guildId);
       if (!session) return message.reply('⚠️ There are no sessions.');
       session.player.pause();
+      session.isPaused = true;
       return message.reply('⏸ Paused playback.');
     }
 
@@ -151,6 +162,7 @@ async function handleMessage(client, message) {
       const session = sessions.get(guildId);
       if (!session) return message.reply('⚠️ There are no sessions.');
       session.player.unpause();
+      session.isPaused = false;
       return message.reply('▶️ Resumed playback.');
     }
 
@@ -269,8 +281,7 @@ async function handleMessage(client, message) {
     const title = meta.id;
     const url = meta.url;
     const titleSan = sanitizeTitle(title);
-    const filename = `${id}_${titleSan}.webm`;
-    const filepath = path.join(downloadsDir, filename);
+    const filenameTemplate = `${id}_${titleSan}.%(ext)s`;
     const t2 = performance.now();
 
     // Cache kontrolü
@@ -278,9 +289,9 @@ async function handleMessage(client, message) {
     if (cached) {
       const track = cached;
 
-      if (!session.currentTrack) {
+      if (!session.currentTrack || session.isPaused) {
         session.queue.unshift(track);
-        await message.reply(`▶️ Playing from cache: **${track.title}**`);
+        session.isPaused = false;
         playNext(targetGuildId);
       } else {
         session.queue.push(track);
@@ -312,8 +323,8 @@ async function handleMessage(client, message) {
       '--force-ipv4',
       '--js-runtimes', 'node',
       '--extractor-args', extractorArg,
-      '-f', 'bestaudio[ext=webm]/bestaudio/best',
-      '-o', filepath,
+      '-f', 'bestaudio/best',
+      '-o', path.join(downloadsDir, filenameTemplate),
       url
     ];
 
@@ -337,11 +348,21 @@ async function handleMessage(client, message) {
       const dlEnd = performance.now();
 
       if (code === 0) {
+        const files = fs.readdirSync(downloadsDir);
+        const file = files.find(f => f.startsWith(`${id}_${titleSan}.`));
+
+        if (!file) {
+          await message.reply('❌ Downloaded file not found.');
+          return;
+        }
+
+        const filepath = path.join(downloadsDir, file);
         const track = { id, title, titleSan, filePath: filepath, url };
         addTrackToCache(track);
 
-        if (!session.currentTrack) {
+        if (!session.currentTrack || session.isPaused) {
           session.queue.unshift(track);
+          session.isPaused = false;
           playNext(targetGuildId);
         } else {
           session.queue.push(track);

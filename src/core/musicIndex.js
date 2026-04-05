@@ -44,7 +44,7 @@ let index = loadIndex();
 
 // Klasördeki mp3'leri tara ve index'e ekle (mevcutsa dokunma)
 for (const file of fs.readdirSync(downloadsDir)) {
-  if (!file.toLowerCase().endsWith('.mp3')) continue;
+  if (!file.match(/\.(mp3|m4a|webm)$/i)) continue;
   const full = path.join(downloadsDir, file);
   const { id, titleSan, title } = parseCachedMp3Filename(file);
 
