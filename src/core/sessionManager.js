@@ -8,7 +8,7 @@ const {
 const { shuffle } = require('../utils/titleUtils');
 const { StreamType } = require('@discordjs/voice');
 
-const sessions = new Map();      // guildId -> { connection, player, queue, currentTrack, lastChannel, repeatCache, cachePool }
+const sessions = new Map();      // guildId -> { connection, player, queue, currentTrack, lastChannel, repeatCache, cachePool, looping }
 const userDefaultVC = new Map(); // userId  -> { guildId, channelId }
 
 function attachPlayerEvents(guildId) {
@@ -35,7 +35,8 @@ function ensureSession(guildId, channelId, adapterCreator) {
       currentTrack: null,
       lastChannel: null,
       repeatCache: false,
-      cachePool: []
+      cachePool: [],
+      looping: false
     };
     sessions.set(guildId, session);
     attachPlayerEvents(guildId);
@@ -69,7 +70,7 @@ async function playNext(guildId) {
     }
   }
 
-  if (!session.queue.length) {
+  if (!session.queue.length && !(session.looping && session.currentTrack)) {
     session.currentTrack = null;
     if (channel?.send) {
       try {
@@ -79,8 +80,15 @@ async function playNext(guildId) {
     return;
   }
 
-  const track = session.queue.shift();
-  session.currentTrack = track;
+  let track;
+  if (session.looping && session.currentTrack) {
+    track = session.currentTrack;
+  }
+  else{
+    track = session.queue.shift();
+    session.currentTrack = track;
+  }
+
   if (channel?.send) {
     try {
       const link = track.url ? `\n🔗 ${track.url}` : '';

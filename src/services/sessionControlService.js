@@ -15,6 +15,7 @@ function stopSession(session) {
   try { session.player.stop(); } catch {}
   session.currentTrack = null;
   session.isPaused = false;
+  session.looping = false;
 }
 
 function skipSession(session) {
@@ -24,6 +25,7 @@ function skipSession(session) {
 
   try { session.player.unpause(); } catch {}
   session.isPaused = false;
+  session.looping = false;
 
   session.currentTrack = null;
   session.player.stop();

@@ -10,6 +10,7 @@ const resumeCommand = require('./actions/resumeCommand');
 const cacheCommand = require('./actions/cacheCommand');
 const playlistCommand = require('./actions/playlistCommand');
 const playCommand = require('./actions/playCommand');
+const loopCommand = require('./actions/loopCommand');
 
 module.exports = [
   {
@@ -66,5 +67,9 @@ module.exports = [
   {
     matches: (content) => content.startsWith('p '),
     handler: playCommand
+  },
+  {
+    matches: (content) => content.startsWith('l'),
+    handler: loopCommand
   }
 ];
