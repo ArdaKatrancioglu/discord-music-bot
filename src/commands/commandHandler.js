@@ -1,8 +1,7 @@
 const routes = require('./registry');
 
-// üst kısma ekle
 const BLACKLIST = new Set([
-  '612376795462762510', // engellenecek user id
+  '612376795462762510',
 ]);
 
 async function handleMessage(client, message) {

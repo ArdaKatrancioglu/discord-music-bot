@@ -36,7 +36,10 @@ function ensureSession(guildId, channelId, adapterCreator) {
       lastChannel: null,
       repeatCache: false,
       cachePool: [],
-      looping: false
+      looping: false,
+      loopCount: 0,
+      loopQueue: [],
+      loopIndex: 0
     };
     sessions.set(guildId, session);
     attachPlayerEvents(guildId);
@@ -81,10 +84,12 @@ async function playNext(guildId) {
   }
 
   let track;
-  if (session.looping && session.currentTrack) {
-    track = session.currentTrack;
-  }
-  else{
+  if (session.looping && session.currentTrack && session.loopQueue.length) {
+    session.loopIndex = (session.loopIndex + 1) % session.loopQueue.length;
+    track = session.loopQueue[session.loopIndex];
+    session.currentTrack = track;
+
+  } else {
     track = session.queue.shift();
     session.currentTrack = track;
   }
