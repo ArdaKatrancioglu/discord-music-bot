@@ -19,6 +19,7 @@
     "dotenv": "^17.2.3",
     "libsodium-wrappers": "^0.7.15",
     "opusscript": "^0.0.8",
+    "playwright": "^1.59.1",
     "sodium-native": "^5.0.9"
   }
 }

@@ -2,6 +2,7 @@ const { sessions } = require('../../core/sessionManager');
 const { stopPlaylistFeeder } = require('../../core/playlist_feeder');
 const { resolveGuildIdForBoundAwareCommand } = require('../../services/messageContextService');
 const { stopSession } = require('../../services/sessionControlService');
+const { stopSpotifyPlaylistFeeder } = require('../../services/spotifyPlaylistService');
 
 module.exports = {
   async execute({ message }) {
@@ -12,6 +13,7 @@ module.exports = {
     }
 
     stopPlaylistFeeder(guildId);
+    stopSpotifyPlaylistFeeder(guildId);
 
     const session = sessions.get(guildId);
     if (!session) return message.reply('⚠️ There are no sessions.');
