@@ -39,7 +39,8 @@ function ensureSession(guildId, channelId, adapterCreator) {
       looping: false,
       loopCount: 0,
       loopQueue: [],
-      loopIndex: 0
+      loopIndex: 0,
+      downloadGeneration: 0
     };
     sessions.set(guildId, session);
     attachPlayerEvents(guildId);

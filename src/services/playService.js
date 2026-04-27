@@ -22,9 +22,17 @@ const {
 const {
   downloadTrack
 } = require('./downloadService');
+const {
+  isSpotifyPlaylistUrl,
+  handleSpotifyPlaylist
+} = require('./spotifyPlaylistService');
 
 async function handlePlayRequest(client, message, query) {
   await message.reply(`🎵 Request: ${query}`);
+
+  if (isSpotifyPlaylistUrl(query)) {
+    return handleSpotifyPlaylist(client, message, query);
+  }
 
   if (/youtube\.com|youtu\.be/.test(query)) {
     try {
@@ -105,6 +113,7 @@ async function handlePlayRequest(client, message, query) {
   const link = url ? `\n🔗 ${url}` : 'A Problem Occured While Trying To Fetch URL';
   await message.reply(`⬇️ Downloading **${title}**${link}`);
   const dlStart = performance.now();
+  const generationAtStart = session.downloadGeneration || 0;
 
   try {
     const result = await downloadTrack({
@@ -113,6 +122,10 @@ async function handlePlayRequest(client, message, query) {
       url,
       filenameTemplate
     });
+
+    if ((session.downloadGeneration || 0) !== generationAtStart) {
+      return;
+    }
 
     const track = { id, title, titleSan, filePath: result.filePath, url };
     addTrackToCache(track);

@@ -12,10 +12,16 @@ function stopSession(session) {
   session.queue = [];
   session.repeatCache = false;
   session.cachePool = [];
+  session.looping = false;
+  session.loopCount = 0;
+  session.loopQueue = [];
+  session.loopIndex = 0;
+  session.downloadGeneration++;
+
   try { session.player.stop(); } catch {}
+
   session.currentTrack = null;
   session.isPaused = false;
-  session.looping = false;
 }
 
 function skipSession(session) {
