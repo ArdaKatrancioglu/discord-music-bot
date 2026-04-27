@@ -72,7 +72,7 @@ async function getSpotifyPlaylistSongs(url) {
       songs.set(song.index, song.text);
     }
 
-    console.log("Collected:", songs.size, "Last index:", Math.max(...songs.keys()));
+    //console.log("Collected:", songs.size, "Last index:", Math.max(...songs.keys()));
 
     if (songs.size === lastSize) {
       sameCount++;
