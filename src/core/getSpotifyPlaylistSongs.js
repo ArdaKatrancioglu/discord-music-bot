@@ -1,3 +1,31 @@
+// binaries.js
+
+// TODO: Do this all thing without chromimum using proper API calls.
+
+// SpotifyImporter
+    // ├── tryOfficialApi()
+    // ├── tryLightweightScrape()
+    // └── tryChromiumFallback() 
+
+
+//     !p <spotify playlist url>
+//         |
+//         v
+// extractSpotifyPlaylistId(url)
+//         |
+//         v
+// spotifyApi.getPlaylistTracks(id)
+//         |
+//         v
+// tracks = [
+//   { title: "Ambitionz Az A Ridah", artists: ["2Pac"] },
+//   { title: "All Eyez On Me", artists: ["2Pac", "Big Syke"] }
+// ]
+//         |
+//         v
+// queueFeeder.addEvery15Seconds(tracks)
+
+
 const { chromium } = require("playwright");
 
 async function getSpotifyPlaylistSongs(url) {
@@ -12,7 +40,7 @@ async function getSpotifyPlaylistSongs(url) {
   let sameCount = 0;
   let lastSize = 0;
 
-  while (sameCount < 3) {
+  while (sameCount < 2) {
     const visibleSongs = await page.evaluate(() => {
       return [...document.querySelectorAll('[data-testid="tracklist-row"]')]
         .map(row => {
