@@ -354,17 +354,20 @@ function buildFallbackQueries(metadata, parsed) {
 
   const tags = Array.isArray(metadata.tags)
     ? metadata.tags
-        .map(norm)
-        .filter((tag) => tag.length >= 3)
-        .filter((tag) => !norm(track).includes(tag))
-        .filter((tag) => !tag.includes('official'))
-        .filter((tag) => !tag.includes('audio'))
-        .filter((tag) => !tag.includes('lyrics'))
-        .slice(0, 3)
+      .map(norm)
+      .filter((tag) => tag.length >= 3)
+      .filter((tag) => !norm(track).includes(tag))
+      .filter((tag) => !tag.includes('official'))
+      .filter((tag) => !tag.includes('audio'))
+      .filter((tag) => !tag.includes('lyrics'))
+      .slice(0, 3)
     : [];
 
   const categories = Array.isArray(metadata.categories)
-    ? metadata.categories.map(norm).filter((cat) => cat.length >= 3).slice(0, 2)
+    ? metadata.categories
+      .map(norm)
+      .filter((cat) => cat.length >= 3)
+      .slice(0, 2)
     : [];
 
   const queries = [];

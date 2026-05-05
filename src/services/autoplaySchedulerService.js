@@ -58,23 +58,23 @@ function scheduleAutoplayCheck(client, message, guildId, session) {
       if (session.lastChannel?.send) {
         await session.lastChannel.send(
           `✅ Autoplay selected based on **${next.referenceTrack.title}**:\n` +
-          `**${next.title}**\n` +
-          `Source: ${next.source}\n` +
-          `Score: ${next.score}\n` +
-          `🔗 ${next.url}`
+            `**${next.title}**\n` +
+            `Source: ${next.source}\n` +
+            `Score: ${next.score}\n` +
+            `🔗 ${next.url}`
         );
       }
 
       message.content = `p ${next.url}`;
       client.emit('messageCreate', message);
     } catch (err) {
-        console.error('[Autoplay Scheduler Error]', err);
+      console.error('[Autoplay Scheduler Error]', err);
 
-        if (session.lastChannel?.send) {
-            try {
-            await session.lastChannel.send(`❌ Autoplay scheduler failed: ${err.message}`);
-            } catch {}
-        }
+      if (session.lastChannel?.send) {
+        try {
+          await session.lastChannel.send(`❌ Autoplay scheduler failed: ${err.message}`);
+        } catch {}
+      }
     }
   }, delayMs);
 }

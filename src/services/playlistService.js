@@ -6,19 +6,15 @@ const { ensureSession } = require('../core/sessionManager');
 
 async function detectIfPlaylist(url) {
   return new Promise((resolve, reject) => {
-    const args = [
-      '--flat-playlist',
-      '--print', '%(id)s',
-      url
-    ];
+    const args = ['--flat-playlist', '--print', '%(id)s', url];
 
     const proc = spawn(ytDlpPath, args);
 
     let out = '';
     proc.stdout.setEncoding('utf8');
-    proc.stdout.on('data', d => out += d);
+    proc.stdout.on('data', (d) => (out += d));
 
-    proc.on('close', code => {
+    proc.on('close', (code) => {
       if (code !== 0) return resolve(false);
 
       const lines = out.trim().split(/\r?\n/).filter(Boolean);

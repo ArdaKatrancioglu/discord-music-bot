@@ -48,7 +48,9 @@ async function findNextAutoplayTrack(session) {
   }
 
   if (!referenceTrack.url) {
-    throw new Error(`Autoplay reference track has no URL: ${referenceTrack.title || 'unknown title'}`);
+    throw new Error(
+      `Autoplay reference track has no URL: ${referenceTrack.title || 'unknown title'}`
+    );
   }
 
   session.autoplayInProgress = true;
@@ -56,8 +58,8 @@ async function findNextAutoplayTrack(session) {
   try {
     const historyUrls = [
       referenceTrack.url,
-      ...(session.queue || []).map(t => t.url).filter(Boolean),
-      ...(session.loopQueue || []).map(t => t.url).filter(Boolean),
+      ...(session.queue || []).map((t) => t.url).filter(Boolean),
+      ...(session.loopQueue || []).map((t) => t.url).filter(Boolean),
       session.currentTrack?.url
     ].filter(Boolean);
 
@@ -75,7 +77,9 @@ async function findNextAutoplayTrack(session) {
     const url = selected.track.webpage_url || selected.track.url;
 
     if (!url) {
-      throw new Error(`Selected autoplay candidate has no URL: ${selected.track.title || 'unknown title'}`);
+      throw new Error(
+        `Selected autoplay candidate has no URL: ${selected.track.title || 'unknown title'}`
+      );
     }
 
     return {

@@ -37,10 +37,7 @@ module.exports = [
   },
   {
     matches: (content) =>
-      content === 's' ||
-      content === 'sikip' ||
-      content === 'skips' ||
-      content === 'sikips',
+      content === 's' || content === 'sikip' || content === 'skips' || content === 'sikips',
     handler: skipCommand
   },
   {
@@ -56,10 +53,7 @@ module.exports = [
     handler: resumeCommand
   },
   {
-    matches: (content) =>
-      content === '!cache' ||
-      content.startsWith('!cache ') ||
-      content === 'c',
+    matches: (content) => content === '!cache' || content.startsWith('!cache ') || content === 'c',
     handler: cacheCommand
   },
   {
@@ -85,5 +79,5 @@ module.exports = [
   {
     matches: (content) => content.startsWith('l'),
     handler: loopCommand
-  },
+  }
 ];

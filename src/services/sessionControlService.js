@@ -8,7 +8,9 @@ function pauseSession(session) {
 }
 
 function resumeSession(session) {
-  try { session.player.unpause(); } catch {}
+  try {
+    session.player.unpause();
+  } catch {}
   session.isPaused = false;
 }
 
@@ -30,7 +32,9 @@ function stopSession(session) {
   session.lastAutoplayReferenceTrack = null;
   session.trackStartedAt = null;
 
-  try { session.player.stop(); } catch {}
+  try {
+    session.player.stop();
+  } catch {}
 
   session.currentTrack = null;
   session.isPaused = false;
@@ -41,7 +45,9 @@ function skipSession(session) {
 
   const skippedTitle = session.currentTrack.title;
 
-  try { session.player.unpause(); } catch {}
+  try {
+    session.player.unpause();
+  } catch {}
   session.isPaused = false;
   session.looping = false;
 

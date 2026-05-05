@@ -20,7 +20,9 @@ async function handleSpotifyPlaylist(client, message, url) {
   const guildId = message.guild?.id;
 
   if (!guildId) {
-    return message.reply('⚠️ Spotify playlist importing currently needs to be started from a server voice channel.');
+    return message.reply(
+      '⚠️ Spotify playlist importing currently needs to be started from a server voice channel.'
+    );
   }
 
   const vc = message.member?.voice?.channel;
@@ -44,7 +46,9 @@ async function handleSpotifyPlaylist(client, message, url) {
     return message.reply('ℹ️ No songs found in Spotify playlist.');
   }
 
-  await message.reply(`📜 Spotify playlist found. Tracks: **${songs.length}**\nAdding one track every **15 seconds**...`);
+  await message.reply(
+    `📜 Spotify playlist found. Tracks: **${songs.length}**\nAdding one track every **15 seconds**...`
+  );
 
   const state = {
     songs,

@@ -39,10 +39,10 @@ module.exports = {
 
       await message.reply(
         `✅ Autoplay selected based on **${next.referenceTrack.title}**:\n` +
-        `**${next.title}**\n` +
-        `Source: ${next.source}\n` +
-        `Score: ${next.score}\n` +
-        `🔗 ${next.url}`
+          `**${next.title}**\n` +
+          `Source: ${next.source}\n` +
+          `Score: ${next.score}\n` +
+          `🔗 ${next.url}`
       );
 
       return handlePlayRequest(client, message, next.url);
@@ -54,8 +54,8 @@ module.exports = {
       scheduleAutoplayCheck(client, message, guildId, session);
 
       return message.reply(
-        `🤖 Autoplay enabled.\n` +
-        `I will add a new track when the queue is empty or the last track is close to ending.`
+        '🤖 Autoplay enabled.\n' +
+          'I will add a new track when the queue is empty or the last track is close to ending.'
       );
     }
 

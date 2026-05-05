@@ -50,12 +50,8 @@ module.exports = {
       );
     }
     if (remainingTracks.length > 0) {
-      const rest = remainingTracks
-        .map((t, i) => `${i + 6}. ${t.title}`)
-        .join('\n');
-      await message.reply(
-        `And ${remainingTracks.length} more track(s):\n${rest}`
-      );
+      const rest = remainingTracks.map((t, i) => `${i + 6}. ${t.title}`).join('\n');
+      await message.reply(`And ${remainingTracks.length} more track(s):\n${rest}`);
     }
   }
 };

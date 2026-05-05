@@ -3,13 +3,7 @@ const { ytDlpPath } = require('./binaries');
 
 function fetchMetadata(input) {
   return new Promise((resolve, reject) => {
-    const args = [
-      '--no-playlist',
-      '--dump-json',
-      '--encoding',
-      'utf-8',
-      input
-    ];
+    const args = ['--no-playlist', '--dump-json', '--encoding', 'utf-8', input];
 
     const proc = spawn(ytDlpPath, args, {
       env: { ...process.env, PYTHONIOENCODING: 'utf-8' }
@@ -21,12 +15,12 @@ function fetchMetadata(input) {
     let out = '';
     let err = '';
 
-    proc.stdout.on('data', d => (out += d));
-    proc.stderr.on('data', d => (err += d));
+    proc.stdout.on('data', (d) => (out += d));
+    proc.stderr.on('data', (d) => (err += d));
 
     proc.on('error', reject);
 
-    proc.on('close', code => {
+    proc.on('close', (code) => {
       if (code !== 0) {
         reject(new Error(`yt-dlp exited ${code}\n${err}`));
         return;

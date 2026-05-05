@@ -49,9 +49,9 @@ for (const file of fs.readdirSync(downloadsDir)) {
   const { id, titleSan, title } = parseCachedMp3Filename(file);
 
   const exists =
-    index.tracks.find(t => t.filePath === full) ||
-    (id && index.tracks.find(t => t.id === id)) ||
-    index.tracks.find(t => t.titleSan === titleSan);
+    index.tracks.find((t) => t.filePath === full) ||
+    (id && index.tracks.find((t) => t.id === id)) ||
+    index.tracks.find((t) => t.titleSan === titleSan);
 
   if (!exists) {
     index.tracks.push({
@@ -67,22 +67,22 @@ saveIndex(index);
 
 function getTrackFromCache({ id, titleSan }) {
   if (id) {
-    const byId = index.tracks.find(t => t.id === id);
+    const byId = index.tracks.find((t) => t.id === id);
     if (byId) return byId;
   }
   if (titleSan) {
-    const byTitle = index.tracks.find(t => t.titleSan === titleSan);
+    const byTitle = index.tracks.find((t) => t.titleSan === titleSan);
     if (byTitle) return byTitle;
   }
   return null;
 }
 
 function addTrackToCache(track) {
-  const byIdIdx = track.id ? index.tracks.findIndex(t => t.id === track.id) : -1;
-  const byPathIdx = index.tracks.findIndex(t => t.filePath === track.filePath);
-  const byTitleIdx = index.tracks.findIndex(t => t.titleSan === track.titleSan);
+  const byIdIdx = track.id ? index.tracks.findIndex((t) => t.id === track.id) : -1;
+  const byPathIdx = index.tracks.findIndex((t) => t.filePath === track.filePath);
+  const byTitleIdx = index.tracks.findIndex((t) => t.titleSan === track.titleSan);
 
-  const idxToUse = byIdIdx >= 0 ? byIdIdx : (byPathIdx >= 0 ? byPathIdx : byTitleIdx);
+  const idxToUse = byIdIdx >= 0 ? byIdIdx : byPathIdx >= 0 ? byPathIdx : byTitleIdx;
 
   if (idxToUse >= 0) {
     index.tracks[idxToUse] = { ...index.tracks[idxToUse], ...track };
@@ -96,7 +96,7 @@ function listAllCachedTracksUnique() {
   return [...index.tracks];
 }
 
-const uniqCount = new Set(index.tracks.map(t => t.filePath)).size;
+const uniqCount = new Set(index.tracks.map((t) => t.filePath)).size;
 console.log(`[Init] Indexed downloads: ${uniqCount} file(s)`);
 
 module.exports = {

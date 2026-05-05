@@ -36,8 +36,14 @@ client.on('messageCreate', (message) => {
 });
 
 // Graceful shutdown
-process.on('SIGINT', () => { destroyAllConnections(); process.exit(0); });
-process.on('SIGTERM', () => { destroyAllConnections(); process.exit(0); });
+process.on('SIGINT', () => {
+  destroyAllConnections();
+  process.exit(0);
+});
+process.on('SIGTERM', () => {
+  destroyAllConnections();
+  process.exit(0);
+});
 
 // Başlat
 (async () => {

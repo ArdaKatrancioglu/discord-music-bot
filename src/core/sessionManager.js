@@ -7,7 +7,10 @@ const {
 } = require('@discordjs/voice');
 
 const { shuffle } = require('../utils/titleUtils');
-const { clearAutoplayTimer, scheduleAutoplayCheck } = require('../services/autoplaySchedulerService');
+const {
+  clearAutoplayTimer,
+  scheduleAutoplayCheck
+} = require('../services/autoplaySchedulerService');
 
 const sessions = new Map();
 const userDefaultVC = new Map();
@@ -132,12 +135,7 @@ async function playNext(guildId) {
 
   clearAutoplayTimer(session);
 
-  scheduleAutoplayCheck(
-    session.autoplayClient,
-    session.autoplayMessage,
-    guildId,
-    session
-  );
+  scheduleAutoplayCheck(session.autoplayClient, session.autoplayMessage, guildId, session);
 
   if (channel?.send) {
     try {

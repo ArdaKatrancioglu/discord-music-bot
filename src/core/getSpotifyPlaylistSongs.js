@@ -3,10 +3,9 @@
 // TODO: Do this all thing without chromimum using proper API calls.
 
 // SpotifyImporter
-    // ├── tryOfficialApi()
-    // ├── tryLightweightScrape()
-    // └── tryChromiumFallback() 
-
+// ├── tryOfficialApi()
+// ├── tryLightweightScrape()
+// └── tryChromiumFallback()
 
 //     !p <spotify playlist url>
 //         |
@@ -25,14 +24,13 @@
 //         v
 // queueFeeder.addEvery15Seconds(tracks)
 
-
-const { chromium } = require("playwright");
+const { chromium } = require('playwright');
 
 async function getSpotifyPlaylistSongs(url) {
   const browser = await chromium.launch({ headless: true });
   const page = await browser.newPage({ viewport: { width: 1400, height: 1000 } });
 
-  await page.goto(url, { waitUntil: "domcontentloaded", timeout: 60000 });
+  await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
   await page.waitForSelector('[data-testid="tracklist-row"]', { timeout: 30000 });
 
   const songs = new Map();
@@ -43,20 +41,17 @@ async function getSpotifyPlaylistSongs(url) {
   while (sameCount < 2) {
     const visibleSongs = await page.evaluate(() => {
       return [...document.querySelectorAll('[data-testid="tracklist-row"]')]
-        .map(row => {
+        .map((row) => {
           const index =
-            row.getAttribute("aria-rowindex") ||
+            row.getAttribute('aria-rowindex') ||
             row.querySelector('[aria-colindex="1"]')?.innerText?.trim();
 
-          const title = row
-            .querySelector('a[href*="/track/"] div')
-            ?.innerText
-            ?.trim();
+          const title = row.querySelector('a[href*="/track/"] div')?.innerText?.trim();
 
           const artists = [...row.querySelectorAll('a[href*="/artist/"]')]
-            .map(a => a.innerText.trim())
+            .map((a) => a.innerText.trim())
             .filter(Boolean)
-            .join(", ");
+            .join(', ');
 
           if (!title) return null;
 
@@ -65,7 +60,7 @@ async function getSpotifyPlaylistSongs(url) {
             text: `${title} - ${artists}`
           };
         })
-        .filter(x => x && Number.isFinite(x.index));
+        .filter((x) => x && Number.isFinite(x.index));
     });
 
     for (const song of visibleSongs) {
@@ -86,7 +81,7 @@ async function getSpotifyPlaylistSongs(url) {
       const lastRow = rows[rows.length - 1];
 
       if (lastRow) {
-        lastRow.scrollIntoView({ block: "end" });
+        lastRow.scrollIntoView({ block: 'end' });
       }
     });
 
@@ -98,9 +93,7 @@ async function getSpotifyPlaylistSongs(url) {
 
   await browser.close();
 
-  return [...songs.entries()]
-    .sort((a, b) => a[0] - b[0])
-    .map(([, text]) => text);
+  return [...songs.entries()].sort((a, b) => a[0] - b[0]).map(([, text]) => text);
 }
 
 module.exports = { getSpotifyPlaylistSongs };

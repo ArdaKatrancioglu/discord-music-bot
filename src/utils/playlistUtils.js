@@ -1,7 +1,4 @@
-const {
-  detectIfPlaylist,
-  handlePlaylist
-} = require('../services/playlistService');
+const { detectIfPlaylist, handlePlaylist } = require('../services/playlistService');
 
 module.exports = {
   detectIfPlaylist,

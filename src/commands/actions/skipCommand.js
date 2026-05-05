@@ -20,15 +20,17 @@ module.exports = {
 
     if (!session.currentTrack) {
       if (session.autoplay && session.queue.length === 0 && session.lastAutoplayReferenceTrack) {
-        await message.reply('🤖 Nothing is playing, but autoplay is enabled. Searching from last reference...');
+        await message.reply(
+          '🤖 Nothing is playing, but autoplay is enabled. Searching from last reference...'
+        );
 
         const next = await findNextAutoplayTrack(session);
 
         if (next) {
           await message.reply(
             `✅ Autoplay selected based on **${next.referenceTrack.title}**:\n` +
-            `**${next.title}**\n` +
-            `🔗 ${next.url}`
+              `**${next.title}**\n` +
+              `🔗 ${next.url}`
           );
 
           return handlePlayRequest(client, message, next.url);
@@ -52,8 +54,8 @@ module.exports = {
       if (next) {
         await message.reply(
           `✅ Autoplay selected based on **${next.referenceTrack.title}**:\n` +
-          `**${next.title}**\n` +
-          `🔗 ${next.url}`
+            `**${next.title}**\n` +
+            `🔗 ${next.url}`
         );
 
         return handlePlayRequest(client, message, next.url);
