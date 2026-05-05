@@ -12,6 +12,7 @@ const playlistCommand = require('./actions/playlistCommand');
 const playCommand = require('./actions/playCommand');
 const loopCommand = require('./actions/loopCommand');
 const loopQueueCommand = require('./actions/loopQueueCommand');
+const autoplayCommand = require('./actions/autoplayCommand');
 
 module.exports = [
   {
@@ -76,5 +77,9 @@ module.exports = [
   {
     matches: (content) => content.startsWith('l'),
     handler: loopCommand
+  },
+  {
+    matches: (content) => content === 'ap' || content === '!autoplay',
+    handler: autoplayCommand
   }
 ];
