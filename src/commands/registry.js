@@ -12,6 +12,7 @@ const playlistCommand = require('./actions/playlistCommand');
 const playCommand = require('./actions/playCommand');
 const loopCommand = require('./actions/loopCommand');
 const loopQueueCommand = require('./actions/loopQueueCommand');
+const autoplayCommand = require('./actions/autoplayCommand');
 
 module.exports = [
   {
@@ -36,10 +37,7 @@ module.exports = [
   },
   {
     matches: (content) =>
-      content === 's' ||
-      content === 'sikip' ||
-      content === 'skips' ||
-      content === 'sikips',
+      content === 's' || content === 'sikip' || content === 'skips' || content === 'sikips',
     handler: skipCommand
   },
   {
@@ -55,15 +53,20 @@ module.exports = [
     handler: resumeCommand
   },
   {
-    matches: (content) =>
-      content === '!cache' ||
-      content.startsWith('!cache ') ||
-      content === 'c',
+    matches: (content) => content === '!cache' || content.startsWith('!cache ') || content === 'c',
     handler: cacheCommand
   },
   {
     matches: (content) => content.startsWith('!playlist '),
     handler: playlistCommand
+  },
+  {
+    matches: (content) =>
+      content === 'ap' ||
+      content.startsWith('ap ') ||
+      content === '!autoplay' ||
+      content.startsWith('!autoplay '),
+    handler: autoplayCommand
   },
   {
     matches: (content) => content.startsWith('p '),

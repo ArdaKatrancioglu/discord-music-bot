@@ -4,7 +4,11 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "start": "node index.js",
+    "format": "prettier --write .",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "check": "npm run format && npm run lint:fix"
   },
   "keywords": [],
   "author": "",
@@ -21,5 +25,11 @@
     "opusscript": "^0.0.8",
     "playwright": "^1.59.1",
     "sodium-native": "^5.0.9"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "eslint": "^10.3.0",
+    "globals": "^17.6.0",
+    "prettier": "^3.8.3"
   }
 }

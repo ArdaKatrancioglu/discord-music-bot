@@ -12,7 +12,9 @@ module.exports = {
     const session = sessions.get(guildId);
 
     return session?.currentTrack
-      ? message.reply(`▶️ Now playing: **${session.currentTrack.title}**\n🔗 ${session.currentTrack.url || 'URL unknown'}`)
+      ? message.reply(
+        `▶️ Now playing: **${session.currentTrack.title}**\n🔗 ${session.currentTrack.url || 'URL unknown'}`
+      )
       : message.reply('ℹ️ No track currently playing.');
   }
 };

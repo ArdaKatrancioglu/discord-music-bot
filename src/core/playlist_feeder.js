@@ -1,5 +1,5 @@
 // playlist_feeder.js
-const feeders = new Map(); 
+const feeders = new Map();
 // guildId -> { timer, list, index, channel }
 
 function startPlaylistFeeder(guildId, channel, list, pushFn, interval = 30000) {
@@ -14,7 +14,7 @@ function startPlaylistFeeder(guildId, channel, list, pushFn, interval = 30000) {
 
   function tick() {
     if (state.index >= state.list.length) {
-      channel.send("🎵 Playlist finished.");
+      channel.send('🎵 Playlist finished.');
       stopPlaylistFeeder(guildId);
       return;
     }
@@ -23,7 +23,7 @@ function startPlaylistFeeder(guildId, channel, list, pushFn, interval = 30000) {
     state.index++;
 
     pushFn(track, guildId, channel);
-    
+
     state.timer = setTimeout(tick, interval);
   }
 

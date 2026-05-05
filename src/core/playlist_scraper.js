@@ -37,9 +37,11 @@ if (!ytDlpPath) {
 function getPlaylistTracks(input) {
   return new Promise((resolve, reject) => {
     const args = [
-      '--flat-playlist',                 // sadece metadata
-      '--encoding', 'utf-8',
-      '--print', '%(id)s\t%(title)s',    // her satır: id<TAB>title
+      '--flat-playlist', // sadece metadata
+      '--encoding',
+      'utf-8',
+      '--print',
+      '%(id)s\t%(title)s', // her satır: id<TAB>title
       input
     ];
 
@@ -52,16 +54,16 @@ function getPlaylistTracks(input) {
     proc.stdout.setEncoding('utf8');
     proc.stderr.setEncoding('utf8');
 
-    proc.stdout.on('data', d => (out += d));
-    proc.stderr.on('data', d => (err += d));
+    proc.stdout.on('data', (d) => (out += d));
+    proc.stderr.on('data', (d) => (err += d));
 
-    proc.on('close', code => {
+    proc.on('close', (code) => {
       if (code !== 0) {
         return reject(new Error(`yt-dlp exited with code ${code}\n${err}`));
       }
 
       const lines = out.trim().split(/\r?\n/).filter(Boolean);
-      const items = lines.map(line => {
+      const items = lines.map((line) => {
         const [id, title] = line.split('\t');
         return {
           id: id.trim(),
@@ -86,10 +88,10 @@ if (require.main === module) {
     process.exit(1);
   }
   getPlaylistTracks(input)
-    .then(list => {
+    .then((list) => {
       console.log(JSON.stringify(list, null, 2));
     })
-    .catch(err => {
+    .catch((err) => {
       console.error(err);
       process.exit(1);
     });

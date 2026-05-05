@@ -18,13 +18,18 @@ function downloadTrack({ id, titleSan, url, filenameTemplate }) {
 
     const dlArgs = [
       '--newline',
-      '--ffmpeg-location', path.dirname(ffmpegPath) || ffmpegPath,
+      '--ffmpeg-location',
+      path.dirname(ffmpegPath) || ffmpegPath,
       '--no-playlist',
       '--force-ipv4',
-      '--js-runtimes', 'node',
-      '--extractor-args', extractorArg,
-      '-f', 'bestaudio/best',
-      '-o', path.join(downloadsDir, filenameTemplate),
+      '--js-runtimes',
+      'node',
+      '--extractor-args',
+      extractorArg,
+      '-f',
+      'bestaudio/best',
+      '-o',
+      path.join(downloadsDir, filenameTemplate),
       url
     ];
 
@@ -41,13 +46,17 @@ function downloadTrack({ id, titleSan, url, filenameTemplate }) {
     let stderrData = '';
     let stdoutData = '';
 
-    dl.stdout.on('data', (data) => { stdoutData += data.toString(); });
-    dl.stderr.on('data', (data) => { stderrData += data.toString(); });
+    dl.stdout.on('data', (data) => {
+      stdoutData += data.toString();
+    });
+    dl.stderr.on('data', (data) => {
+      stderrData += data.toString();
+    });
 
     dl.on('close', (code) => {
       if (code === 0) {
         const files = fs.readdirSync(downloadsDir);
-        const file = files.find(f => f.startsWith(`${id}_${titleSan}.`));
+        const file = files.find((f) => f.startsWith(`${id}_${titleSan}.`));
 
         if (!file) {
           reject({
