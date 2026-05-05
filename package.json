@@ -4,6 +4,7 @@
   "description": "",
   "main": "index.js",
   "scripts": {
+    "prestart": "node scripts/start-bgutil.js",
     "start": "node index.js",
     "format": "prettier --write .",
     "lint": "eslint .",
