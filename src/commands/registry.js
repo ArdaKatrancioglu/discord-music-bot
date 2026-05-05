@@ -67,6 +67,14 @@ module.exports = [
     handler: playlistCommand
   },
   {
+    matches: (content) =>
+      content === 'ap' ||
+      content.startsWith('ap ') ||
+      content === '!autoplay' ||
+      content.startsWith('!autoplay '),
+    handler: autoplayCommand
+  },
+  {
     matches: (content) => content.startsWith('p '),
     handler: playCommand
   },
@@ -78,8 +86,4 @@ module.exports = [
     matches: (content) => content.startsWith('l'),
     handler: loopCommand
   },
-  {
-    matches: (content) => content === 'ap' || content === '!autoplay',
-    handler: autoplayCommand
-  }
 ];

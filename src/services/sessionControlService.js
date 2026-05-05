@@ -1,3 +1,7 @@
+// sessionControlService.js
+
+const { clearAutoplayTimer } = require('./autoplaySchedulerService');
+
 function pauseSession(session) {
   session.player.pause();
   session.isPaused = true;
@@ -9,14 +13,22 @@ function resumeSession(session) {
 }
 
 function stopSession(session) {
+  clearAutoplayTimer(session);
   session.queue = [];
+
   session.repeatCache = false;
   session.cachePool = [];
+
   session.looping = false;
   session.loopCount = 0;
   session.loopQueue = [];
   session.loopIndex = 0;
   session.downloadGeneration++;
+
+  session.autoplay = false;
+  session.autoplayInProgress = false;
+  session.lastAutoplayReferenceTrack = null;
+  session.trackStartedAt = null;
 
   try { session.player.stop(); } catch {}
 

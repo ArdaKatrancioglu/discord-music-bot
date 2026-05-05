@@ -1,3 +1,5 @@
+// playService.js
+
 const { performance } = require('perf_hooks');
 const { sanitizeTitle } = require('../utils/titleUtils');
 const {
@@ -77,6 +79,8 @@ async function handlePlayRequest(client, message, query) {
 
   const session = ensureSession(targetGuildId, targetChannelId, guild.voiceAdapterCreator);
   session.lastChannel = message.channel;
+  session.autoplayClient = client;
+  session.autoplayMessage = message;
 
   const t0 = performance.now();
   const input = /^(https?:\/\/|www\.)/i.test(query) ? query : `ytsearch1:${query}`;
@@ -99,12 +103,14 @@ async function handlePlayRequest(client, message, query) {
   const cached = getTrackFromCache({ id, titleSan });
   if (cached) {
     const track = cached;
+    if (!track.duration && meta.duration) {
+      track.duration = meta.duration;
+      addTrackToCache(track);
+    }
     const result = queueTrackIntoSession(session, targetGuildId, track);
-
     if (!result.startedImmediately) {
       await message.reply(`🔄 Queued from cache: **${track.title}**`);
     }
-
     return message.reply(
       `⏱ meta ${(t1 - t0).toFixed(0)}ms, prep ${(t2 - t1).toFixed(0)}ms, cache 0ms`
     );
@@ -127,7 +133,7 @@ async function handlePlayRequest(client, message, query) {
       return;
     }
 
-    const track = { id, title, titleSan, filePath: result.filePath, url };
+    const track = { id, title, titleSan, filePath: result.filePath, url, duration: meta.duration || null};
     addTrackToCache(track);
 
     const queueResult = queueTrackIntoSession(session, targetGuildId, track);
