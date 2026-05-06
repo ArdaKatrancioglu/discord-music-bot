@@ -489,8 +489,114 @@ function dedupeCandidates(candidates) {
   return out;
 }
 
-async function findAutoplayCandidate(currentUrl, historyUrls = []) {
+function normalizeCandidateUrl(candidate) {
+  return candidate?.track?.webpage_url || candidate?.track?.url || null;
+}
+
+function normalizeTrackIdentity(track) {
+  return {
+    url: track?.url || track?.webpage_url || null,
+    id: track?.id || track?.videoId || null,
+    title: norm(track?.title || '')
+  };
+}
+
+function isInRecentHistory(candidate, historyTracks = []) {
+  const candidateIdentity = normalizeTrackIdentity({
+    url: candidate.track.webpage_url || candidate.track.url,
+    id: candidate.track.id || candidate.track.videoId,
+    title: candidate.track.title
+  });
+
+  for (const track of historyTracks) {
+    const historyIdentity = normalizeTrackIdentity(track);
+
+    if (candidateIdentity.url && historyIdentity.url && candidateIdentity.url === historyIdentity.url) {
+      return true;
+    }
+
+    if (candidateIdentity.id && historyIdentity.id && candidateIdentity.id === historyIdentity.id) {
+      return true;
+    }
+
+    if (
+      candidateIdentity.title &&
+      historyIdentity.title &&
+      candidateIdentity.title === historyIdentity.title
+    ) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function filterRecentHistoryCandidates(candidates, historyTracks = []) {
+  if (!historyTracks.length) return candidates;
+
+  return candidates.filter((candidate) => !isInRecentHistory(candidate, historyTracks));
+}
+
+function selectCandidateRoulette(candidates) {
+  if (!candidates.length) return null;
+  if (candidates.length === 1) {
+    return {
+      ...candidates[0],
+      selectionWeight: 1
+    };
+  }
+
+  const scores = candidates.map((candidate) => Number(candidate.score || 0));
+  const minScore = Math.min(...scores);
+  const maxScore = Math.max(...scores);
+
+  const minWeight = 0.15;
+
+  const weighted = candidates.map((candidate) => {
+    const score = Number(candidate.score || 0);
+
+    let normalized = 1;
+
+    if (maxScore !== minScore) {
+      normalized = (score - minScore) / (maxScore - minScore);
+    }
+
+    const selectionWeight = minWeight + normalized * (1 - minWeight);
+
+    return {
+      ...candidate,
+      selectionWeight
+    };
+  });
+
+  const totalWeight = weighted.reduce((sum, candidate) => sum + candidate.selectionWeight, 0);
+  let roll = Math.random() * totalWeight;
+
+  for (const candidate of weighted) {
+    roll -= candidate.selectionWeight;
+
+    if (roll <= 0) {
+      return candidate;
+    }
+  }
+
+  return weighted[weighted.length - 1];
+}
+
+function selectAutoplayCandidate(candidates, selectionMode = 'roulette') {
+  if (!candidates.length) return null;
+
+  if (selectionMode === 'best') {
+    return candidates[0];
+  }
+
+  return selectCandidateRoulette(candidates);
+}
+
+async function findAutoplayCandidate(currentUrl, historyUrls = [], options = {}) {
   const history = new Set([currentUrl, ...historyUrls]);
+  const historyTracks = options.historyTracks || [];
+  const selectionMode = options.selectionMode || 'roulette';
 
   const metadata = await getYtMetadata(currentUrl);
   const parsed = guessArtistTrack(metadata);
@@ -509,11 +615,21 @@ async function findAutoplayCandidate(currentUrl, historyUrls = []) {
   candidates = dedupeCandidates(candidates);
   candidates.sort((a, b) => b.score - a.score);
 
+  const unfilteredCandidates = candidates;
+
+  candidates = filterRecentHistoryCandidates(candidates, historyTracks);
+
+  if (candidates.length === 0 && unfilteredCandidates.length > 0) {
+    candidates = unfilteredCandidates;
+  }
+
+  const selected = selectAutoplayCandidate(candidates, selectionMode);
+
   return {
     metadata,
     parsed,
     confidence,
-    selected: candidates[0] || null,
+    selected,
     candidates
   };
 }

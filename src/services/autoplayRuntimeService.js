@@ -56,14 +56,20 @@ async function findNextAutoplayTrack(session) {
   session.autoplayInProgress = true;
 
   try {
+    const recentHistory = session.recentHistory || [];
+
     const historyUrls = [
       referenceTrack.url,
+      ...recentHistory.map((t) => t.url).filter(Boolean),
       ...(session.queue || []).map((t) => t.url).filter(Boolean),
       ...(session.loopQueue || []).map((t) => t.url).filter(Boolean),
       session.currentTrack?.url
     ].filter(Boolean);
 
-    const result = await findAutoplayCandidate(referenceTrack.url, historyUrls);
+    const result = await findAutoplayCandidate(referenceTrack.url, historyUrls, {
+      historyTracks: recentHistory,
+      selectionMode: 'roulette'
+    });
 
     if (!result) {
       throw new Error('Autoplay candidate search returned no result.');
@@ -87,7 +93,8 @@ async function findNextAutoplayTrack(session) {
       title: selected.track.title,
       source: selected.source,
       score: selected.score,
-      referenceTrack
+      referenceTrack,
+      selectionWeight: selected.selectionWeight
     };
   } finally {
     session.autoplayInProgress = false;

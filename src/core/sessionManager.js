@@ -58,7 +58,10 @@ function createSession(guildId, channelId, adapterCreator) {
     autoplayClient: null,
     autoplayMessage: null,
     lastAutoplayReferenceTrack: null,
-    trackStartedAt: null
+    trackStartedAt: null,
+
+    recentHistory: [],
+    recentHistoryLimit: 5
   };
 
   sessions.set(guildId, session);
@@ -132,6 +135,20 @@ async function playNext(guildId) {
   session.currentTrack = track;
   session.trackStartedAt = Date.now();
   session.lastAutoplayReferenceTrack = track;
+
+  if (track?.url) {
+    const limit = session.recentHistoryLimit || 5;
+
+    session.recentHistory = [
+      track,
+      ...(session.recentHistory || []).filter((t) => {
+        if (!t) return false;
+        if (track.url && t.url === track.url) return false;
+        if (track.id && t.id === track.id) return false;
+        return true;
+      })
+    ].slice(0, limit);
+  }
 
   clearAutoplayTimer(session);
 
