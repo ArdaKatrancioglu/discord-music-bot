@@ -9,7 +9,11 @@ const { destroyAllConnections } = require('./src/core/sessionManager');
 const { exec } = require('child_process');
 
 const TOKEN = process.env.TOKEN;
-if (!TOKEN) {
+const useAria2c = process.env.USE_ARIA2C_FOR_VIDEO_FALLBACK;
+const lastFmApiKey = process.env.LASTFM_API_KEY;
+const useCookies = process.env.USE_COOKIES;
+
+if (!TOKEN || !useAria2c || !lastFmApiKey || !useCookies) {
   console.error('TOKEN is missing. Add TOKEN=... to .env file.');
   process.exit(1);
 }
