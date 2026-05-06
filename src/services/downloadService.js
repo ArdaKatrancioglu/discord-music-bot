@@ -11,7 +11,8 @@ const VIDEO_FALLBACK_FORMAT =
   'best[height<=480][ext=mp4]/best[height<=480]/best[ext=mp4]/best';
 
 function buildExtractorArg() {
-  return 'youtubepot-bgutilhttp:base_url=http://127.0.0.1:4416';
+  const baseUrl = process.env.BGUTIL_BASE_URL || 'http://bgutil-pot:4416';
+  return `youtubepot-bgutilhttp:base_url=${baseUrl}`;
 }
 
 function runYtDlpDownload({
