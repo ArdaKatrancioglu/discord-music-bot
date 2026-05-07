@@ -18,3 +18,5 @@ services:
       USE_ARIA2C_FOR_VIDEO_FALLBACK: "false"
     env_file:
       - .env
+    volumes:
+      - ./downloadedMusic:/app/downloadedMusic
