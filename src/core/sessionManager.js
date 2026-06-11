@@ -34,7 +34,7 @@ function scheduleIdleDisconnect(guildId, session) {
 
     try {
       await activeSession.lastChannel?.send(
-        '🛑 2 dakika boyunca aktivite olmadı, bu yüzden ses kanalından çıktım.'
+        '🛑 Since ya\'ll is not doing nothin\' for 2 minutes i\'m out.'
       );
     } catch {}
 
@@ -47,6 +47,38 @@ function scheduleIdleDisconnect(guildId, session) {
 
     sessions.delete(guildId);
   }, IDLE_TIMEOUT_MS);
+}
+
+async function disconnectIfChannelEmpty(guildId, guild) {
+  const session = sessions.get(guildId);
+  if (!session || !guild) return false;
+
+  const channelId = session.connection?.joinConfig?.channelId;
+  if (!channelId) return false;
+
+  const voiceChannel = guild.channels?.cache?.get(channelId);
+  if (!voiceChannel?.members) return false;
+
+  const nonBotMembers = voiceChannel.members.filter((member) => !member.user?.bot);
+  if (nonBotMembers.size > 0) return false;
+
+  clearAutoplayTimer(session);
+  clearIdleDisconnectTimer(session);
+
+  try {
+    session.player.stop();
+  } catch {}
+
+  try {
+    await session.lastChannel?.send('👋 Ses kanalında kimse kalmadığı için kanaldan çıktım.');
+  } catch {}
+
+  try {
+    session.connection?.destroy();
+  } catch {}
+
+  sessions.delete(guildId);
+  return true;
 }
 
 function attachPlayerEvents(guildId) {
@@ -226,5 +258,6 @@ module.exports = {
   ensureSession,
   playNext,
   destroyAllConnections,
-  clearIdleDisconnectTimer
+  clearIdleDisconnectTimer,
+  disconnectIfChannelEmpty
 };
