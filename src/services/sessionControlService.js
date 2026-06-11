@@ -1,13 +1,16 @@
 // sessionControlService.js
 
 const { clearAutoplayTimer } = require('./autoplaySchedulerService');
+const { clearIdleDisconnectTimer } = require('../core/sessionManager');
 
 function pauseSession(session) {
+  clearIdleDisconnectTimer(session);
   session.player.pause();
   session.isPaused = true;
 }
 
 function resumeSession(session) {
+  clearIdleDisconnectTimer(session);
   try {
     session.player.unpause();
   } catch {}
@@ -16,6 +19,7 @@ function resumeSession(session) {
 
 function stopSession(session) {
   clearAutoplayTimer(session);
+  clearIdleDisconnectTimer(session);
   session.queue = [];
 
   session.repeatCache = false;
@@ -44,6 +48,7 @@ function skipSession(session) {
   if (!session.currentTrack) return null;
 
   const skippedTitle = session.currentTrack.title;
+  clearIdleDisconnectTimer(session);
 
   try {
     session.player.unpause();

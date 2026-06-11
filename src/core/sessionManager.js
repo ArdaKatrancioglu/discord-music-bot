@@ -14,6 +14,40 @@ const {
 
 const sessions = new Map();
 const userDefaultVC = new Map();
+const IDLE_TIMEOUT_MS = 2 * 60 * 1000;
+
+function clearIdleDisconnectTimer(session) {
+  if (session?.idleDisconnectTimer) {
+    clearTimeout(session.idleDisconnectTimer);
+    session.idleDisconnectTimer = null;
+  }
+}
+
+function scheduleIdleDisconnect(guildId, session) {
+  clearIdleDisconnectTimer(session);
+
+  session.idleDisconnectTimer = setTimeout(async () => {
+    const activeSession = sessions.get(guildId);
+    if (!activeSession || activeSession !== session) return;
+    if (activeSession.currentTrack || activeSession.queue.length > 0) return;
+    if (activeSession.autoplay) return;
+
+    try {
+      await activeSession.lastChannel?.send(
+        '🛑 2 dakika boyunca aktivite olmadı, bu yüzden ses kanalından çıktım.'
+      );
+    } catch {}
+
+    clearAutoplayTimer(activeSession);
+    clearIdleDisconnectTimer(activeSession);
+
+    try {
+      activeSession.connection?.destroy();
+    } catch {}
+
+    sessions.delete(guildId);
+  }, IDLE_TIMEOUT_MS);
+}
 
 function attachPlayerEvents(guildId) {
   const session = sessions.get(guildId);
@@ -59,6 +93,7 @@ function createSession(guildId, channelId, adapterCreator) {
     autoplayMessage: null,
     lastAutoplayReferenceTrack: null,
     trackStartedAt: null,
+    idleDisconnectTimer: null,
 
     recentHistory: [],
     recentHistoryLimit: 5
@@ -103,6 +138,7 @@ async function playNext(guildId) {
   if (!session) return;
 
   const channel = session.lastChannel;
+  clearIdleDisconnectTimer(session);
 
   if (!session.queue.length && session.repeatCache && session.cachePool?.length) {
     session.queue = shuffle([...session.cachePool]);
@@ -118,6 +154,7 @@ async function playNext(guildId) {
       } catch {}
     }
 
+    scheduleIdleDisconnect(guildId, session);
     return;
   }
 
@@ -173,11 +210,14 @@ async function playNext(guildId) {
 function destroyAllConnections() {
   for (const [, session] of sessions.entries()) {
     clearAutoplayTimer(session);
+    clearIdleDisconnectTimer(session);
 
     try {
       session.connection?.destroy();
     } catch {}
   }
+
+  sessions.clear();
 }
 
 module.exports = {
@@ -185,5 +225,6 @@ module.exports = {
   userDefaultVC,
   ensureSession,
   playNext,
-  destroyAllConnections
+  destroyAllConnections,
+  clearIdleDisconnectTimer
 };

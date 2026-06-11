@@ -1,9 +1,11 @@
 const { listAllCachedTracksUnique } = require('../core/musicIndex');
-const { ensureSession, playNext } = require('../core/sessionManager');
+const { ensureSession, playNext, clearIdleDisconnectTimer } = require('../core/sessionManager');
 const { shuffle } = require('../utils/titleUtils');
 const { getBoundVoiceTarget, setBoundVoiceTarget } = require('./messageContextService');
 
 function queueTrackIntoSession(session, guildId, track) {
+  clearIdleDisconnectTimer(session);
+
   if (!session.currentTrack || session.isPaused) {
     session.queue.unshift(track);
     session.isPaused = false;
