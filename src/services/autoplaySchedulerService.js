@@ -48,9 +48,6 @@ function scheduleAutoplayCheck(client, message, guildId, session) {
         await session.lastChannel.send(
           `🤖 Autoplay preparing next track based on **${session.currentTrack.title}**...`
         );
-        for (const debugChunk of formatAutoplayCandidatesDebug(next.candidates)) {
-          await session.lastChannel.send(debugChunk);
-        }
       }
 
       const next = await findNextAutoplayTrack(session);
@@ -63,6 +60,12 @@ function scheduleAutoplayCheck(client, message, guildId, session) {
       }
 
       if (session.lastChannel?.send) {
+        for (const debugChunk of formatAutoplayCandidatesDebug(
+          next.candidates,
+          next.providerDebug
+        )) {
+          await session.lastChannel.send(debugChunk);
+        }
         await session.lastChannel.send(
           `✅ Autoplay selected based on **${next.referenceTrack.title}**:\n` +
             `**${next.title}**\n` +

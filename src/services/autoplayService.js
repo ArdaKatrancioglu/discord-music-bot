@@ -10,9 +10,12 @@ const {
   parseTitleSimilarityRejectThreshold
 } = require('../config/autoplayConfig');
 const { applyTitleSimilarityPenalty } = require('../utils/autoplayTitleSimilarity');
+const { createListenBrainzClient } = require('./listenBrainzService');
+const { collectCandidateProviders, dedupeCandidates } = require('../utils/autoplayCandidates');
 
 const LASTFM_API_KEY = process.env.LASTFM_API_KEY || null;
 const MAX_YT_RESULTS = 20;
+const listenBrainzClient = createListenBrainzClient();
 
 function execYtDlp(args) {
   return new Promise((resolve, reject) => {
@@ -338,6 +341,7 @@ function scoreCandidate(candidate, parsed, source) {
 
   if (source === 'lastfm-track') score += 65;
   if (source === 'lastfm-artist') score += 50;
+  if (source === 'listenbrainz-radio') score += 55;
   if (source === 'ytsearch') score += 10;
 
   if (artist && title.includes(artist)) score += 10;
@@ -445,11 +449,47 @@ async function getCandidatesFromLastFm(parsed, history) {
       candidates.push({
         source,
         artist: item.artist,
+        candidateTrack: item.track,
         query,
         track: result,
         score
       });
 
+      break;
+    }
+  }
+
+  return candidates;
+}
+
+async function getCandidatesFromListenBrainz(parsed, history) {
+  if (parsed.confidence < 65) return [];
+
+  const recommendations = await listenBrainzClient.getCandidates({
+    artist: parsed.artist,
+    track: cleanTrackTitleForLastFm(parsed.track)
+  });
+  const candidates = [];
+
+  for (const item of recommendations) {
+    const query = `${item.artist} ${item.track} official audio`;
+    const results = await ytSearch(query, 5);
+
+    for (const result of results) {
+      const reason = rejectReason(result, parsed, history);
+      if (reason) continue;
+
+      let score = scoreCandidate(result, parsed, item.source);
+      score += Math.round(Number(item.match || 0) * 15);
+      candidates.push({
+        source: item.source,
+        artist: item.artist,
+        candidateTrack: item.track,
+        recordingMbid: item.recordingMbid,
+        query,
+        track: result,
+        score
+      });
       break;
     }
   }
@@ -480,23 +520,6 @@ async function getCandidatesFromFallback(metadata, parsed, history) {
   return candidates;
 }
 
-function dedupeCandidates(candidates) {
-  const seen = new Set();
-  const out = [];
-
-  for (const c of candidates) {
-    const url = c.track.webpage_url || c.track.url;
-    const key = url || norm(c.track.title);
-
-    if (seen.has(key)) continue;
-
-    seen.add(key);
-    out.push(c);
-  }
-
-  return out;
-}
-
 function normalizeTrackIdentity(track) {
   return {
     url: track?.url || track?.webpage_url || null,
@@ -515,7 +538,11 @@ function isInRecentHistory(candidate, historyTracks = []) {
   for (const track of historyTracks) {
     const historyIdentity = normalizeTrackIdentity(track);
 
-    if (candidateIdentity.url && historyIdentity.url && candidateIdentity.url === historyIdentity.url) {
+    if (
+      candidateIdentity.url &&
+      historyIdentity.url &&
+      candidateIdentity.url === historyIdentity.url
+    ) {
       return true;
     }
 
@@ -585,28 +612,37 @@ function formatAutoplaySelectionDebug(candidate) {
   return `\nTitle similarity: ${similarityPercent} | Multiplier: ${multiplierPercent} | Base: ${baseScoreText} -> Final: ${finalScoreText}`;
 }
 
-function formatAutoplayCandidatesDebug(candidates = []) {
-  if (!candidates.length) return [];
+function formatAutoplayCandidatesDebug(candidates = [], providerDebug = {}) {
+  if (!candidates.length && !Object.keys(providerDebug.counts || {}).length) return [];
+
+  const counts = providerDebug.counts || {};
+  const summaryParts = Object.entries(counts).map(([source, count]) => `${source}: ${count}`);
+  if (Number.isFinite(providerDebug.mergedCount)) {
+    summaryParts.push(`merged: ${providerDebug.mergedCount}`);
+  }
+  if (Number.isFinite(providerDebug.dedupedCount)) {
+    summaryParts.push(`deduped: ${providerDebug.dedupedCount}`);
+  }
 
   const lines = candidates.map((candidate, index) => {
     const title = candidate.track?.title || 'unknown title';
+    const artist = candidate.artist || candidate.track?.artist || 'unknown artist';
+    const sources = (candidate.sources || [candidate.source]).join(', ');
     const similarity = Number(candidate.titleSimilarity);
     const baseScore = Number(candidate.baseScore);
     const score = Number(candidate.score);
     const penalty = Number(candidate.titleSimilarityPenalty);
-    const similarityText = Number.isFinite(similarity)
-      ? `${Math.round(similarity * 100)}%`
-      : 'n/a';
+    const similarityText = Number.isFinite(similarity) ? `${Math.round(similarity * 100)}%` : 'n/a';
     const baseText = Number.isFinite(baseScore) ? baseScore.toFixed(2) : 'n/a';
     const scoreText = Number.isFinite(score) ? score.toFixed(2) : 'n/a';
     const penaltyText = Number.isFinite(penalty) ? `${Math.round(penalty * 100)}%` : 'n/a';
     const excludedText = candidate.titleSimilarityRejected ? ' | EXCLUDED' : '';
 
-    return `${index + 1}. ${title} | similarity: ${similarityText} | exp penalty: ${penaltyText} | base: ${baseText} | final: ${scoreText}${excludedText}`;
+    return `${index + 1}. [${sources}] ${artist} - ${title} | similarity: ${similarityText} | exp penalty: ${penaltyText} | base: ${baseText} | final: ${scoreText}${excludedText}`;
   });
 
   const chunks = [];
-  let current = 'Autoplay candidates:\n';
+  let current = `Autoplay candidate sources: ${summaryParts.join(' | ')}\n`;
   for (const line of lines) {
     if (current.length + line.length + 1 > 1900) {
       chunks.push(`\`${current}\``);
@@ -695,17 +731,40 @@ async function findAutoplayCandidate(currentUrl, historyUrls = [], options = {})
   const parsed = guessArtistTrack(metadata);
   const confidence = metadataConfidence(metadata, parsed);
 
-  let candidates = [];
-
-  if (LASTFM_API_KEY && parsed.confidence >= 65) {
-    candidates = await getCandidatesFromLastFm(parsed, history);
-  }
+  const providerResult = await collectCandidateProviders(
+    {
+      lastfm: () => getCandidatesFromLastFm(parsed, history),
+      listenbrainz: () => getCandidatesFromListenBrainz(parsed, history)
+    },
+    (provider, error) => {
+      console.warn(`[Autoplay] ${provider} candidate provider failed:`, error?.message || error);
+    }
+  );
+  let candidates = providerResult.candidates;
+  const providerDebug = {
+    counts: { ...providerResult.counts },
+    mergedCount: candidates.length
+  };
 
   if (candidates.length === 0) {
     candidates = await getCandidatesFromFallback(metadata, parsed, history);
+    providerDebug.counts.fallback = candidates.length;
   }
 
+  providerDebug.mergedCount = candidates.length;
   candidates = dedupeCandidates(candidates);
+  providerDebug.dedupedCount = candidates.length;
+
+  console.debug(
+    '[Autoplay] Candidate providers:',
+    providerDebug,
+    candidates.map((candidate) => ({
+      sources: candidate.sources,
+      artist: candidate.artist,
+      title: candidate.candidateTrack || candidate.track?.title,
+      recordingMbid: candidate.recordingMbid || null
+    }))
+  );
 
   const unfilteredCandidates = candidates;
 
@@ -735,7 +794,8 @@ async function findAutoplayCandidate(currentUrl, historyUrls = [], options = {})
     parsed,
     confidence,
     selected,
-    candidates
+    candidates,
+    providerDebug
   };
 }
 

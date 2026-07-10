@@ -91,12 +91,13 @@ async function findNextAutoplayTrack(session) {
     return {
       url,
       title: selected.track.title,
-      source: selected.source,
+      source: (selected.sources || [selected.source]).join(' + '),
       score: selected.score,
       baseScore: selected.baseScore,
       titleSimilarity: selected.titleSimilarity,
       titleSimilarityMultiplier: selected.titleSimilarityMultiplier,
       candidates: result.candidates,
+      providerDebug: result.providerDebug,
       referenceTrack,
       selectionWeight: selected.selectionWeight
     };

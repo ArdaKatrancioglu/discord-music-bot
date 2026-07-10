@@ -59,6 +59,8 @@ Create a `.env` file in your project root and add your bot token:
 
 ```
 TOKEN=your_discord_bot_token_here
+LASTFM_API_KEY=your_lastfm_api_key_here
+LISTENBRAINZ_TOKEN=
 AUTOPLAY_TITLE_SIMILARITY_STRENGTH=0.5
 AUTOPLAY_TITLE_SIMILARITY_EXPONENT=4
 AUTOPLAY_TITLE_SIMILARITY_REJECT_THRESHOLD=0.95
@@ -70,6 +72,29 @@ to `1` (an exact match receives a zero final score); the default is `0.5`.
 match. `0` restores the linear curve and larger values make the curve steeper; the default
 is `4`. Candidates at or above `AUTOPLAY_TITLE_SIMILARITY_REJECT_THRESHOLD` are shown in
 debug output but excluded from roulette selection; the default is `0.95`.
+
+### Autoplay recommendation sources
+
+Autoplay keeps Last.fm as a recommendation source and also queries ListenBrainz artist
+radio. Candidates from both providers are resolved through YouTube and merged before the
+existing history filtering, title-diversity ranking, and roulette selection. Debug output
+includes per-provider counts, each candidate's source, and the merged/deduplicated count.
+A failure in either provider is logged but does not stop the other provider from supplying
+candidates.
+
+`LASTFM_API_KEY` is required for Last.fm candidates. `LISTENBRAINZ_TOKEN` is optional for
+this integration: without it, the bot resolves the reference artist through the public
+MusicBrainz API, then uses ListenBrainz's public artist-radio and recording-metadata reads.
+
+ListenBrainz's current official API documentation says its name-based
+`/1/metadata/lookup/` endpoint requires authentication. If `LISTENBRAINZ_TOKEN` is set, the
+bot uses that endpoint first and falls back to MusicBrainz if it fails. To obtain a token:
+
+1. Create or sign in to a ListenBrainz account.
+2. Open [ListenBrainz settings](https://listenbrainz.org/settings/).
+3. Copy the user token and set `LISTENBRAINZ_TOKEN=your_token` in `.env`.
+
+Do not commit the token. See `.env.example` for the complete environment template.
 
 ### 3. Install Dependencies
 

@@ -50,7 +50,7 @@ module.exports = {
           `🔗 ${next.url}`
       );
 
-      for (const debugChunk of formatAutoplayCandidatesDebug(next.candidates)) {
+      for (const debugChunk of formatAutoplayCandidatesDebug(next.candidates, next.providerDebug)) {
         await message.reply(debugChunk);
       }
 
