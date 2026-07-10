@@ -1,6 +1,6 @@
-const DEFAULT_TITLE_SIMILARITY_STRENGTH = 0.5;
-const DEFAULT_TITLE_SIMILARITY_EXPONENT = 4;
-const DEFAULT_TITLE_SIMILARITY_REJECT_THRESHOLD = 0.95;
+const DEFAULT_TITLE_SIMILARITY_STRENGTH = 1;
+const DEFAULT_TITLE_SIMILARITY_EXPONENT = -0.5;
+const DEFAULT_TITLE_SIMILARITY_REJECT_THRESHOLD = 0.85;
 
 function parseTitleSimilarityStrength(value, fallback = DEFAULT_TITLE_SIMILARITY_STRENGTH) {
   if (value === undefined || value === null || value === '') return fallback;
