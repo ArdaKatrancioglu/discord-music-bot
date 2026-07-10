@@ -1,4 +1,5 @@
 const { findNextAutoplayTrack } = require('./autoplayRuntimeService');
+const { formatAutoplaySelectionDebug } = require('./autoplayService');
 
 function clearAutoplayTimer(session) {
   if (session.autoplayTimer) {
@@ -61,6 +62,7 @@ function scheduleAutoplayCheck(client, message, guildId, session) {
             `**${next.title}**\n` +
             `Source: ${next.source}\n` +
             `Score: ${next.score}\n` +
+            `${formatAutoplaySelectionDebug(next)}\n` +
             `🔗 ${next.url}`
         );
       }
@@ -73,7 +75,9 @@ function scheduleAutoplayCheck(client, message, guildId, session) {
       if (session.lastChannel?.send) {
         try {
           await session.lastChannel.send(`❌ Autoplay scheduler failed: ${err.message}`);
-        } catch {}
+        } catch (sendErr) {
+          console.error('[Autoplay Scheduler Error] Failed to send failure message:', sendErr);
+        }
       }
     }
   }, delayMs);

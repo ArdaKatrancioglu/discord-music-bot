@@ -492,10 +492,6 @@ function dedupeCandidates(candidates) {
   return out;
 }
 
-function normalizeCandidateUrl(candidate) {
-  return candidate?.track?.webpage_url || candidate?.track?.url || null;
-}
-
 function normalizeTrackIdentity(track) {
   return {
     url: track?.url || track?.webpage_url || null,
@@ -561,6 +557,26 @@ function applyTitleDiversityRanking(candidates, parsed, strength) {
       ...scoring
     };
   });
+}
+
+function formatAutoplaySelectionDebug(candidate) {
+  if (!candidate) return '';
+
+  const titleSimilarity = Number(candidate.titleSimilarity);
+  if (!Number.isFinite(titleSimilarity)) return '';
+
+  const titleSimilarityMultiplier = Number(candidate.titleSimilarityMultiplier);
+  const baseScore = Number(candidate.baseScore);
+  const finalScore = Number(candidate.score);
+
+  const similarityPercent = `${Math.round(titleSimilarity * 100)}%`;
+  const multiplierPercent = Number.isFinite(titleSimilarityMultiplier)
+    ? `${Math.round(titleSimilarityMultiplier * 100)}%`
+    : 'n/a';
+  const baseScoreText = Number.isFinite(baseScore) ? baseScore.toFixed(2) : 'n/a';
+  const finalScoreText = Number.isFinite(finalScore) ? finalScore.toFixed(2) : 'n/a';
+
+  return `\nTitle similarity: ${similarityPercent} | Multiplier: ${multiplierPercent} | Base: ${baseScoreText} -> Final: ${finalScoreText}`;
 }
 
 function selectCandidateRoulette(candidates) {
@@ -718,5 +734,6 @@ async function handleAutoplayCommand(client, message) {
 module.exports = {
   handleAutoplayCommand,
   findAutoplayCandidate,
-  applyTitleDiversityRanking
+  applyTitleDiversityRanking,
+  formatAutoplaySelectionDebug
 };

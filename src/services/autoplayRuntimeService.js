@@ -93,6 +93,9 @@ async function findNextAutoplayTrack(session) {
       title: selected.track.title,
       source: selected.source,
       score: selected.score,
+      baseScore: selected.baseScore,
+      titleSimilarity: selected.titleSimilarity,
+      titleSimilarityMultiplier: selected.titleSimilarityMultiplier,
       referenceTrack,
       selectionWeight: selected.selectionWeight
     };

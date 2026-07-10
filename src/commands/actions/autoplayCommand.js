@@ -1,6 +1,7 @@
 const { sessions } = require('../../core/sessionManager');
 const { resolveGuildIdForBoundAwareCommand } = require('../../services/messageContextService');
 const { findNextAutoplayTrack } = require('../../services/autoplayRuntimeService');
+const { formatAutoplaySelectionDebug } = require('../../services/autoplayService');
 const { handlePlayRequest } = require('../../services/playService');
 const { scheduleAutoplayCheck } = require('../../services/autoplaySchedulerService');
 
@@ -42,6 +43,7 @@ module.exports = {
           `**${next.title}**\n` +
           `Source: ${next.source}\n` +
           `Score: ${next.score}\n` +
+          `${formatAutoplaySelectionDebug(next)}\n` +
           `🔗 ${next.url}`
       );
 
