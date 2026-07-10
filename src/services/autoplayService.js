@@ -3,6 +3,8 @@ const https = require('https');
 const { sessions } = require('../core/sessionManager');
 const { ytDlpPath } = require('../core/binaries');
 const { resolveGuildIdForBoundAwareCommand } = require('./messageContextService');
+const { autoplayConfig, parseTitleSimilarityStrength } = require('../config/autoplayConfig');
+const { applyTitleSimilarityPenalty } = require('../utils/autoplayTitleSimilarity');
 
 const LASTFM_API_KEY = process.env.LASTFM_API_KEY || null;
 const MAX_YT_RESULTS = 20;
@@ -437,6 +439,7 @@ async function getCandidatesFromLastFm(parsed, history) {
 
       candidates.push({
         source,
+        artist: item.artist,
         query,
         track: result,
         score
@@ -537,6 +540,29 @@ function filterRecentHistoryCandidates(candidates, historyTracks = []) {
   return candidates.filter((candidate) => !isInRecentHistory(candidate, historyTracks));
 }
 
+function applyTitleDiversityRanking(candidates, parsed, strength) {
+  const referenceTitle = parsed.track || parsed.rawTrack;
+
+  return candidates.map((candidate) => {
+    const scoring = applyTitleSimilarityPenalty(
+      candidate.score,
+      referenceTitle,
+      candidate.track?.title,
+      strength,
+      {
+        referenceArtist: parsed.artist,
+        candidateArtist:
+          candidate.artist || candidate.track?.artist || candidate.track?.creator || null
+      }
+    );
+
+    return {
+      ...candidate,
+      ...scoring
+    };
+  });
+}
+
 function selectCandidateRoulette(candidates) {
   if (!candidates.length) return null;
   if (candidates.length === 1) {
@@ -597,6 +623,10 @@ async function findAutoplayCandidate(currentUrl, historyUrls = [], options = {})
   const history = new Set([currentUrl, ...historyUrls]);
   const historyTracks = options.historyTracks || [];
   const selectionMode = options.selectionMode || 'roulette';
+  const titleSimilarityStrength = parseTitleSimilarityStrength(
+    options.titleSimilarityStrength,
+    autoplayConfig.titleSimilarityStrength
+  );
 
   const metadata = await getYtMetadata(currentUrl);
   const parsed = guessArtistTrack(metadata);
@@ -613,7 +643,6 @@ async function findAutoplayCandidate(currentUrl, historyUrls = [], options = {})
   }
 
   candidates = dedupeCandidates(candidates);
-  candidates.sort((a, b) => b.score - a.score);
 
   const unfilteredCandidates = candidates;
 
@@ -622,6 +651,9 @@ async function findAutoplayCandidate(currentUrl, historyUrls = [], options = {})
   if (candidates.length === 0 && unfilteredCandidates.length > 0) {
     candidates = unfilteredCandidates;
   }
+
+  candidates = applyTitleDiversityRanking(candidates, parsed, titleSimilarityStrength);
+  candidates.sort((a, b) => b.score - a.score);
 
   const selected = selectAutoplayCandidate(candidates, selectionMode);
 
@@ -685,5 +717,6 @@ async function handleAutoplayCommand(client, message) {
 
 module.exports = {
   handleAutoplayCommand,
-  findAutoplayCandidate
+  findAutoplayCandidate,
+  applyTitleDiversityRanking
 };

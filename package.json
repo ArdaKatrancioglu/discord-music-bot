@@ -6,6 +6,7 @@
   "scripts": {
     "prestart": "node scripts/start-bgutil.js",
     "start": "node index.js",
+    "test": "node --test",
     "format": "prettier --write .",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",

@@ -59,7 +59,12 @@ Create a `.env` file in your project root and add your bot token:
 
 ```
 TOKEN=your_discord_bot_token_here
+AUTOPLAY_TITLE_SIMILARITY_STRENGTH=0.5
 ```
+
+`AUTOPLAY_TITLE_SIMILARITY_STRENGTH` controls how strongly autoplay penalizes candidates
+whose normalized titles resemble the reference track. Use a value from `0` (disabled) to
+`1` (full `score * (1 - similarity)` behavior); the default is `0.5`.
 
 ### 3. Install Dependencies
 
