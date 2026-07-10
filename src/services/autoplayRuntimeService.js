@@ -96,6 +96,7 @@ async function findNextAutoplayTrack(session) {
       baseScore: selected.baseScore,
       titleSimilarity: selected.titleSimilarity,
       titleSimilarityMultiplier: selected.titleSimilarityMultiplier,
+      candidates: result.candidates,
       referenceTrack,
       selectionWeight: selected.selectionWeight
     };

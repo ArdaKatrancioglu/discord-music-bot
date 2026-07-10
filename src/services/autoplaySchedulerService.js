@@ -1,5 +1,8 @@
 const { findNextAutoplayTrack } = require('./autoplayRuntimeService');
-const { formatAutoplaySelectionDebug } = require('./autoplayService');
+const {
+  formatAutoplaySelectionDebug,
+  formatAutoplayCandidatesDebug
+} = require('./autoplayService');
 
 function clearAutoplayTimer(session) {
   if (session.autoplayTimer) {
@@ -45,6 +48,9 @@ function scheduleAutoplayCheck(client, message, guildId, session) {
         await session.lastChannel.send(
           `🤖 Autoplay preparing next track based on **${session.currentTrack.title}**...`
         );
+        for (const debugChunk of formatAutoplayCandidatesDebug(next.candidates)) {
+          await session.lastChannel.send(debugChunk);
+        }
       }
 
       const next = await findNextAutoplayTrack(session);

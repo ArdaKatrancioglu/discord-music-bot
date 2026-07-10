@@ -1,7 +1,10 @@
 const { sessions } = require('../../core/sessionManager');
 const { resolveGuildIdForBoundAwareCommand } = require('../../services/messageContextService');
 const { findNextAutoplayTrack } = require('../../services/autoplayRuntimeService');
-const { formatAutoplaySelectionDebug } = require('../../services/autoplayService');
+const {
+  formatAutoplaySelectionDebug,
+  formatAutoplayCandidatesDebug
+} = require('../../services/autoplayService');
 const { handlePlayRequest } = require('../../services/playService');
 const { scheduleAutoplayCheck } = require('../../services/autoplaySchedulerService');
 
@@ -46,6 +49,10 @@ module.exports = {
           `${formatAutoplaySelectionDebug(next)}\n` +
           `🔗 ${next.url}`
       );
+
+      for (const debugChunk of formatAutoplayCandidatesDebug(next.candidates)) {
+        await message.reply(debugChunk);
+      }
 
       return handlePlayRequest(client, message, next.url);
     }

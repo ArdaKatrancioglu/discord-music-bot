@@ -579,6 +579,36 @@ function formatAutoplaySelectionDebug(candidate) {
   return `\nTitle similarity: ${similarityPercent} | Multiplier: ${multiplierPercent} | Base: ${baseScoreText} -> Final: ${finalScoreText}`;
 }
 
+function formatAutoplayCandidatesDebug(candidates = []) {
+  if (!candidates.length) return [];
+
+  const lines = candidates.map((candidate, index) => {
+    const title = candidate.track?.title || 'unknown title';
+    const similarity = Number(candidate.titleSimilarity);
+    const baseScore = Number(candidate.baseScore);
+    const score = Number(candidate.score);
+    const similarityText = Number.isFinite(similarity)
+      ? `${Math.round(similarity * 100)}%`
+      : 'n/a';
+    const baseText = Number.isFinite(baseScore) ? baseScore.toFixed(2) : 'n/a';
+    const scoreText = Number.isFinite(score) ? score.toFixed(2) : 'n/a';
+
+    return `${index + 1}. ${title} | similarity: ${similarityText} | base: ${baseText} | final: ${scoreText}`;
+  });
+
+  const chunks = [];
+  let current = 'Autoplay candidates:\n';
+  for (const line of lines) {
+    if (current.length + line.length + 1 > 1900) {
+      chunks.push(`\`${current}\``);
+      current = '';
+    }
+    current += `${line}\n`;
+  }
+  if (current) chunks.push(`\`${current}\``);
+  return chunks;
+}
+
 function selectCandidateRoulette(candidates) {
   if (!candidates.length) return null;
   if (candidates.length === 1) {
@@ -735,5 +765,6 @@ module.exports = {
   handleAutoplayCommand,
   findAutoplayCandidate,
   applyTitleDiversityRanking,
-  formatAutoplaySelectionDebug
+  formatAutoplaySelectionDebug,
+  formatAutoplayCandidatesDebug
 };
