@@ -60,11 +60,16 @@ Create a `.env` file in your project root and add your bot token:
 ```
 TOKEN=your_discord_bot_token_here
 AUTOPLAY_TITLE_SIMILARITY_STRENGTH=0.5
+AUTOPLAY_TITLE_SIMILARITY_EXPONENT=4
+AUTOPLAY_TITLE_SIMILARITY_REJECT_THRESHOLD=0.95
 ```
 
-`AUTOPLAY_TITLE_SIMILARITY_STRENGTH` controls how strongly autoplay penalizes candidates
-whose normalized titles resemble the reference track. Use a value from `0` (disabled) to
-`1` (full `score * (1 - similarity)` behavior); the default is `0.5`.
+`AUTOPLAY_TITLE_SIMILARITY_STRENGTH` controls the maximum title penalty from `0` (disabled)
+to `1` (an exact match receives a zero final score); the default is `0.5`.
+`AUTOPLAY_TITLE_SIMILARITY_EXPONENT` controls how sharply the penalty rises near an exact
+match. `0` restores the linear curve and larger values make the curve steeper; the default
+is `4`. Candidates at or above `AUTOPLAY_TITLE_SIMILARITY_REJECT_THRESHOLD` are shown in
+debug output but excluded from roulette selection; the default is `0.95`.
 
 ### 3. Install Dependencies
 

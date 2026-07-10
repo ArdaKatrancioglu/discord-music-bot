@@ -45,7 +45,7 @@ module.exports = {
         `✅ Autoplay selected based on **${next.referenceTrack.title}**:\n` +
           `**${next.title}**\n` +
           `Source: ${next.source}\n` +
-          `Score: ${next.score}\n` +
+          `Score: ${Number(next.score).toFixed(2)}\n` +
           `${formatAutoplaySelectionDebug(next)}\n` +
           `🔗 ${next.url}`
       );

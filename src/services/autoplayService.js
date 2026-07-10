@@ -3,7 +3,12 @@ const https = require('https');
 const { sessions } = require('../core/sessionManager');
 const { ytDlpPath } = require('../core/binaries');
 const { resolveGuildIdForBoundAwareCommand } = require('./messageContextService');
-const { autoplayConfig, parseTitleSimilarityStrength } = require('../config/autoplayConfig');
+const {
+  autoplayConfig,
+  parseTitleSimilarityStrength,
+  parseTitleSimilarityExponent,
+  parseTitleSimilarityRejectThreshold
+} = require('../config/autoplayConfig');
 const { applyTitleSimilarityPenalty } = require('../utils/autoplayTitleSimilarity');
 
 const LASTFM_API_KEY = process.env.LASTFM_API_KEY || null;
@@ -536,7 +541,7 @@ function filterRecentHistoryCandidates(candidates, historyTracks = []) {
   return candidates.filter((candidate) => !isInRecentHistory(candidate, historyTracks));
 }
 
-function applyTitleDiversityRanking(candidates, parsed, strength) {
+function applyTitleDiversityRanking(candidates, parsed, strength, exponent) {
   const referenceTitle = parsed.track || parsed.rawTrack;
 
   return candidates.map((candidate) => {
@@ -546,6 +551,7 @@ function applyTitleDiversityRanking(candidates, parsed, strength) {
       candidate.track?.title,
       strength,
       {
+        exponent,
         referenceArtist: parsed.artist,
         candidateArtist:
           candidate.artist || candidate.track?.artist || candidate.track?.creator || null
@@ -587,13 +593,16 @@ function formatAutoplayCandidatesDebug(candidates = []) {
     const similarity = Number(candidate.titleSimilarity);
     const baseScore = Number(candidate.baseScore);
     const score = Number(candidate.score);
+    const penalty = Number(candidate.titleSimilarityPenalty);
     const similarityText = Number.isFinite(similarity)
       ? `${Math.round(similarity * 100)}%`
       : 'n/a';
     const baseText = Number.isFinite(baseScore) ? baseScore.toFixed(2) : 'n/a';
     const scoreText = Number.isFinite(score) ? score.toFixed(2) : 'n/a';
+    const penaltyText = Number.isFinite(penalty) ? `${Math.round(penalty * 100)}%` : 'n/a';
+    const excludedText = candidate.titleSimilarityRejected ? ' | EXCLUDED' : '';
 
-    return `${index + 1}. ${title} | similarity: ${similarityText} | base: ${baseText} | final: ${scoreText}`;
+    return `${index + 1}. ${title} | similarity: ${similarityText} | exp penalty: ${penaltyText} | base: ${baseText} | final: ${scoreText}${excludedText}`;
   });
 
   const chunks = [];
@@ -673,6 +682,14 @@ async function findAutoplayCandidate(currentUrl, historyUrls = [], options = {})
     options.titleSimilarityStrength,
     autoplayConfig.titleSimilarityStrength
   );
+  const titleSimilarityExponent = parseTitleSimilarityExponent(
+    options.titleSimilarityExponent,
+    autoplayConfig.titleSimilarityExponent
+  );
+  const titleSimilarityRejectThreshold = parseTitleSimilarityRejectThreshold(
+    options.titleSimilarityRejectThreshold,
+    autoplayConfig.titleSimilarityRejectThreshold
+  );
 
   const metadata = await getYtMetadata(currentUrl);
   const parsed = guessArtistTrack(metadata);
@@ -698,10 +715,20 @@ async function findAutoplayCandidate(currentUrl, historyUrls = [], options = {})
     candidates = unfilteredCandidates;
   }
 
-  candidates = applyTitleDiversityRanking(candidates, parsed, titleSimilarityStrength);
+  candidates = applyTitleDiversityRanking(
+    candidates,
+    parsed,
+    titleSimilarityStrength,
+    titleSimilarityExponent
+  );
+  candidates = candidates.map((candidate) => ({
+    ...candidate,
+    titleSimilarityRejected: candidate.titleSimilarity >= titleSimilarityRejectThreshold
+  }));
   candidates.sort((a, b) => b.score - a.score);
 
-  const selected = selectAutoplayCandidate(candidates, selectionMode);
+  const selectableCandidates = candidates.filter((candidate) => !candidate.titleSimilarityRejected);
+  const selected = selectAutoplayCandidate(selectableCandidates, selectionMode);
 
   return {
     metadata,
