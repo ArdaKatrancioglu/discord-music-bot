@@ -85,11 +85,16 @@ async function handlePlayRequest(client, message, query) {
 
   const cached = getTrackFromCache({ id, titleSan });
   if (cached) {
-    const track = cached;
-    if (!track.duration && meta.duration) {
-      track.duration = meta.duration;
-      addTrackToCache(track);
+    if (!cached.duration && meta.duration) {
+      cached.duration = meta.duration;
+      addTrackToCache(cached);
     }
+    const track = {
+      ...cached,
+      artist: meta.artist || cached.artist || null,
+      uploader: meta.uploader || cached.uploader || null,
+      album: meta.album || cached.album || null
+    };
     const result = queueTrackIntoSession(session, targetGuildId, track);
     if (!result.startedImmediately) {
       await message.reply(`🔄 Queued from cache: **${track.title}**`);
@@ -116,7 +121,7 @@ async function handlePlayRequest(client, message, query) {
       return;
     }
 
-    const track = {
+    const libraryTrack = {
       id,
       title,
       titleSan,
@@ -124,7 +129,14 @@ async function handlePlayRequest(client, message, query) {
       url,
       duration: meta.duration || null
     };
-    addTrackToCache(track);
+    addTrackToCache(libraryTrack);
+
+    const track = {
+      ...libraryTrack,
+      artist: meta.artist || null,
+      uploader: meta.uploader || null,
+      album: meta.album || null
+    };
 
     const queueResult = queueTrackIntoSession(session, targetGuildId, track);
 

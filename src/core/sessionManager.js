@@ -11,6 +11,7 @@ const {
   clearAutoplayTimer,
   scheduleAutoplayCheck
 } = require('../services/autoplaySchedulerService');
+const { startLyricsWorker, stopLyricsWorker } = require('../services/lyricsService');
 
 const sessions = new Map();
 const userDefaultVC = new Map();
@@ -34,7 +35,7 @@ function scheduleIdleDisconnect(guildId, session) {
 
     try {
       await activeSession.lastChannel?.send(
-        '🛑 Since ya\'ll is not doing nothin\' for 2 minutes i\'m out.'
+        "🛑 Since ya'll doing nothin' for 2 minutes I'm out."
       );
     } catch {}
 
@@ -64,6 +65,8 @@ async function disconnectIfChannelEmpty(guildId, guild) {
 
   clearAutoplayTimer(session);
   clearIdleDisconnectTimer(session);
+  session.lyricsEnabled = false;
+  stopLyricsWorker(session);
 
   try {
     session.player.stop();
@@ -125,7 +128,17 @@ function createSession(guildId, channelId, adapterCreator) {
     autoplayMessage: null,
     lastAutoplayReferenceTrack: null,
     trackStartedAt: null,
+    pausedAt: null,
+    pausedDurationMs: 0,
+    playbackGeneration: 0,
     idleDisconnectTimer: null,
+
+    lyricsEnabled: false,
+    lyricsChannel: null,
+    lyricsGeneration: 0,
+    lyricsAbortController: null,
+    lyricsWake: null,
+    lyricsTask: null,
 
     recentHistory: [],
     recentHistoryLimit: 5
@@ -171,6 +184,7 @@ async function playNext(guildId) {
 
   const channel = session.lastChannel;
   clearIdleDisconnectTimer(session);
+  stopLyricsWorker(session);
 
   if (!session.queue.length && session.repeatCache && session.cachePool?.length) {
     session.queue = shuffle([...session.cachePool]);
@@ -202,7 +216,10 @@ async function playNext(guildId) {
   if (!track) return;
 
   session.currentTrack = track;
+  session.playbackGeneration++;
   session.trackStartedAt = Date.now();
+  session.pausedAt = null;
+  session.pausedDurationMs = 0;
   session.lastAutoplayReferenceTrack = track;
 
   if (track?.url) {
@@ -237,12 +254,16 @@ async function playNext(guildId) {
       inputType: isWebm ? StreamType.WebmOpus : StreamType.Arbitrary
     })
   );
+
+  if (session.lyricsEnabled) startLyricsWorker(session);
 }
 
 function destroyAllConnections() {
   for (const [, session] of sessions.entries()) {
     clearAutoplayTimer(session);
     clearIdleDisconnectTimer(session);
+    session.lyricsEnabled = false;
+    stopLyricsWorker(session);
 
     try {
       session.connection?.destroy();
