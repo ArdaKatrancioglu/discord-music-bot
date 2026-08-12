@@ -13,6 +13,7 @@ const playCommand = require('./actions/playCommand');
 const loopCommand = require('./actions/loopCommand');
 const loopQueueCommand = require('./actions/loopQueueCommand');
 const autoplayCommand = require('./actions/autoplayCommand');
+const lyricsCommand = require('./actions/lyricsCommand');
 
 module.exports = [
   {
@@ -75,6 +76,10 @@ module.exports = [
   {
     matches: (content) => content.startsWith('lq'),
     handler: loopQueueCommand
+  },
+  {
+    matches: (content) => content === 'l',
+    handler: lyricsCommand
   },
   {
     matches: (content) => content.startsWith('l'),

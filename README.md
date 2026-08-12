@@ -27,6 +27,10 @@ It allows users to play, queue, pause, skip, and cache YouTube audio directly in
   - `!pause` / `!resume` → control playback
   - `!stop` → clear queue and stop player
 
+- **Synchronized lyrics**
+  - `l` toggles LRCLIB lyrics for the current server session
+  - Lyrics start at the current playback position and stay synchronized through pause/resume
+
 - **Voice channel integration**
   - Automatically connects and stays synced with the voice channel
   - Supports DM binding (`!bind`, `!unbind`, `!use <guildId> <channelId>`)
@@ -125,6 +129,7 @@ project/
 | `!use <guildId> <channelId>` | Manually set DM binding                          |
 | `!cache`                     | Start infinite random playback from cached songs |
 | `!cache off`                 | Stop the infinite playback loop                  |
+| `l`                          | Toggle synchronized lyrics                       |
 
 ## Technical Notes
 

@@ -2,24 +2,33 @@
 
 const { clearAutoplayTimer } = require('./autoplaySchedulerService');
 const { clearIdleDisconnectTimer } = require('../core/sessionManager');
+const { stopLyricsWorker, wakeLyricsWorker } = require('./lyricsService');
 
 function pauseSession(session) {
   clearIdleDisconnectTimer(session);
-  session.player.pause();
-  session.isPaused = true;
+  if (session.player.pause()) {
+    session.isPaused = true;
+    session.pausedAt = Date.now();
+    wakeLyricsWorker(session);
+  }
 }
 
 function resumeSession(session) {
   clearIdleDisconnectTimer(session);
   try {
-    session.player.unpause();
+    if (session.player.unpause()) {
+      if (session.pausedAt) session.pausedDurationMs += Date.now() - session.pausedAt;
+      session.pausedAt = null;
+      session.isPaused = false;
+      wakeLyricsWorker(session);
+    }
   } catch {}
-  session.isPaused = false;
 }
 
 function stopSession(session) {
   clearAutoplayTimer(session);
   clearIdleDisconnectTimer(session);
+  stopLyricsWorker(session);
   session.queue = [];
 
   session.repeatCache = false;
@@ -35,6 +44,8 @@ function stopSession(session) {
   session.autoplayInProgress = false;
   session.lastAutoplayReferenceTrack = null;
   session.trackStartedAt = null;
+  session.pausedAt = null;
+  session.pausedDurationMs = 0;
 
   try {
     session.player.stop();
@@ -49,11 +60,14 @@ function skipSession(session) {
 
   const skippedTitle = session.currentTrack.title;
   clearIdleDisconnectTimer(session);
+  stopLyricsWorker(session);
 
   try {
     session.player.unpause();
   } catch {}
   session.isPaused = false;
+  session.pausedAt = null;
+  session.pausedDurationMs = 0;
   session.looping = false;
 
   session.currentTrack = null;

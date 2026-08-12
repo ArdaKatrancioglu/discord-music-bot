@@ -18,6 +18,7 @@ const downloadsDir = path.join(process.cwd(), 'downloadedMusic');
 if (!fs.existsSync(downloadsDir)) fs.mkdirSync(downloadsDir, { recursive: true });
 
 const indexPath = path.join(downloadsDir, 'index.json');
+const debugLog = () => {};
 
 function loadIndex() {
   try {
@@ -35,8 +36,10 @@ function loadIndex() {
 function saveIndex(idx) {
   try {
     fs.writeFileSync(indexPath, JSON.stringify(idx, null, 2), 'utf8');
+    return true;
   } catch (e) {
     console.warn('[Index] Could not write index.json:', e.message);
+    return false;
   }
 }
 
@@ -92,6 +95,43 @@ function addTrackToCache(track) {
   saveIndex(index);
 }
 
+function updateTrackLyrics(trackId, lyrics) {
+  if (!trackId) {
+    console.warn('[Lyrics Cache] Cannot update lyrics: track has no id.');
+    return false;
+  }
+
+  let latestIndex;
+  try {
+    const raw = fs.readFileSync(indexPath, 'utf8');
+    latestIndex = JSON.parse(raw);
+  } catch (error) {
+    console.warn(
+      '[Lyrics Cache] Could not read index.json; lyrics were not cached:',
+      error.message
+    );
+    return false;
+  }
+
+  if (!latestIndex || !Array.isArray(latestIndex.tracks)) {
+    console.warn('[Lyrics Cache] Invalid index.json structure; lyrics were not cached.');
+    return false;
+  }
+
+  const track = latestIndex.tracks.find((item) => item.id === trackId);
+  if (!track) {
+    console.warn(`[Lyrics Cache] Track ${trackId} was not found in index.json.`);
+    return false;
+  }
+
+  track.lyrics = lyrics;
+  if (!saveIndex(latestIndex)) return false;
+
+  index = latestIndex;
+  debugLog(`[Lyrics Cache] Updated persistent lyrics for track ${trackId}: ${lyrics.status}.`);
+  return true;
+}
+
 function listAllCachedTracksUnique() {
   return [...index.tracks];
 }
@@ -103,5 +143,6 @@ module.exports = {
   downloadsDir,
   getTrackFromCache,
   addTrackToCache,
+  updateTrackLyrics,
   listAllCachedTracksUnique
 };
