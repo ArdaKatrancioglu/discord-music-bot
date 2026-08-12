@@ -19,7 +19,9 @@ function resolveBinary(name) {
       .toString()
       .trim();
     if (out) return out.split(/\r?\n/)[0];
-  } catch (_) {}
+  } catch (err) {
+    console.error('[resolveBinary] error:', err);
+  }
 
   return null;
 }

@@ -19,7 +19,9 @@ async function handleMessage(client, message) {
     console.error('[messageCreate] Handler error:', err);
     try {
       await message.reply('⚠️ An unexpected error occurred. What have you done?');
-    } catch {}
+    } catch (err) {
+      console.error('[messageCreate] Handler error:', err);
+    }
   }
 }
 
