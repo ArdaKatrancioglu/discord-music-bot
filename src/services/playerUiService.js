@@ -5,11 +5,17 @@ const {
   EmbedBuilder,
   MessageFlags
 } = require('discord.js');
-const { findActiveLineIndex, getPlaybackPosition, parseTrackIdentity } = require('./lyricsService');
+const {
+  findActiveLineIndex,
+  getLyricsPosition,
+  getPlaybackPosition,
+  parseTrackIdentity
+} = require('./lyricsService');
 
 const PLAYER_CUSTOM_ID_PREFIX = 'music-player:';
 const PROGRESS_SEGMENTS = 20;
-const PROGRESS_UPDATE_MS = 10000;
+const PLAYER_UPDATE_WHEN_LAST_MS = 3000;
+const PLAYER_UPDATE_WHEN_NOT_LAST_MS = 10000;
 
 function playerCustomId(session, action) {
   return `${PLAYER_CUSTOM_ID_PREFIX}${session.guildId}:${action}`;
@@ -31,7 +37,7 @@ function buildProgressBar(position, duration, segments = PROGRESS_SEGMENTS) {
   const safePosition = Math.max(0, Number(position) || 0);
   const ratio = safeDuration ? Math.min(1, safePosition / safeDuration) : 0;
   const marker = Math.min(segments - 1, Math.floor(ratio * segments));
-  const bar = Array.from({ length: segments }, (_, index) => (index === marker ? '●' : '━')).join(
+  const bar = Array.from({ length: segments }, (_, index) => (index === marker ? '●' : '─')).join(
     ''
   );
   const durationLabel = safeDuration ? formatDuration(safeDuration) : '--:--';
@@ -64,6 +70,19 @@ function getArtworkUrl(track) {
   }
 }
 
+function getUpNextTrack(session) {
+  if (session.looping && session.loopQueue?.length) {
+    return session.loopQueue[(session.loopIndex + 1) % session.loopQueue.length] || null;
+  }
+  return session.queue?.[0] || null;
+}
+
+function formatTrackName(track) {
+  if (!track) return 'Queue empty';
+  const identity = getDisplayIdentity(track);
+  return identity.artist ? `${identity.artist} — ${identity.title}` : identity.title || track.title;
+}
+
 function buildLyricsText(session) {
   if (!session.lyricsEnabled) return null;
   if (session.lyricsStatus === 'loading') return 'Searching for synchronized lyrics…';
@@ -71,7 +90,7 @@ function buildLyricsText(session) {
     return 'Synchronized lyrics are unavailable for this track.';
   }
 
-  const activeIndex = findActiveLineIndex(session.lyricsLines, getPlaybackPosition(session));
+  const activeIndex = findActiveLineIndex(session.lyricsLines, getLyricsPosition(session));
   const center = Math.max(0, activeIndex);
   const start = Math.max(0, center - 1);
   const end = Math.min(session.lyricsLines.length - 1, center + 1);
@@ -84,18 +103,6 @@ function buildLyricsText(session) {
   }
 
   return rendered.join('\n\n');
-}
-
-function getLyricsLabel(session) {
-  if (!session.lyricsEnabled) return 'Off';
-  if (session.lyricsStatus === 'synced') return 'Synced';
-  if (session.lyricsStatus === 'loading') return 'Loading';
-  return 'Unavailable';
-}
-
-function getRepeatLabel(session) {
-  if (!session.looping) return 'Off';
-  return session.loopQueue?.length > 1 ? 'Queue' : 'Track';
 }
 
 function buildPlayerPayload(session, { stopped = false } = {}) {
@@ -114,7 +121,8 @@ function buildPlayerPayload(session, { stopped = false } = {}) {
       ? `[${escapeMarkdown(displayTitle)}](${track.url})`
       : `**${escapeMarkdown(displayTitle)}**`;
     const description = [linkedTitle];
-    if (identity.album) description.push(escapeMarkdown(identity.album));
+
+    const upNext = getUpNextTrack(session);
 
     const lyricsText = buildLyricsText(session);
     if (lyricsText) description.push(lyricsText);
@@ -125,16 +133,17 @@ function buildPlayerPayload(session, { stopped = false } = {}) {
     if (Number.isFinite(Number(session.volume))) {
       statusParts.push(`🔊 Volume: ${Math.round(Number(session.volume))}%`);
     }
-    statusParts.push(`Lyrics: ${getLyricsLabel(session)}`);
-    statusParts.push(`🔁 Repeat: ${getRepeatLabel(session)}`);
+    const lyricsOffset = Number(track.lyricsOffset) || 0;
+    if (lyricsOffset !== 0) {
+      statusParts.push(`Offset: ${lyricsOffset >= 0 ? '+' : ''}${lyricsOffset}s`);
+    }
 
-    embed
-      .setTitle('🎵 NOW PLAYING')
-      .setDescription(description.join('\n\n'))
-      .addFields(
-        { name: '\u200b', value: progress },
-        { name: '\u200b', value: statusParts.join('  •  ') }
-      );
+    embed.setTitle('🎵\u2003NOW PLAYING').setDescription(description.join('\n\n'));
+    embed.addFields({ name: '\u200b', value: progress });
+    if (statusParts.length) {
+      embed.addFields({ name: '\u200b', value: statusParts.join('  •  ') });
+    }
+    embed.setFooter({ text: `Up Next: ${formatTrackName(upNext)}` });
     const artworkUrl = getArtworkUrl(track);
     if (artworkUrl) embed.setThumbnail(artworkUrl);
   }
@@ -146,23 +155,31 @@ function buildPlayerPayload(session, { stopped = false } = {}) {
     .setLabel(session.isPaused ? 'Resume' : 'Pause')
     .setDisabled(disabled);
 
-  const firstRow = new ActionRowBuilder().addComponents(
-    new ButtonBuilder()
-      .setCustomId(playerCustomId(session, 'previous'))
-      .setStyle(ButtonStyle.Secondary)
-      .setEmoji('⏮️')
-      .setDisabled(true),
+  const firstRowButtons = [
     pauseButton,
     new ButtonBuilder()
       .setCustomId(playerCustomId(session, 'skip'))
       .setStyle(ButtonStyle.Secondary)
       .setEmoji('⏭️')
       .setDisabled(disabled)
-  );
+  ];
+  if (!disabled && session.lyricsEnabled) {
+    firstRowButtons.push(
+      new ButtonBuilder()
+        .setCustomId(playerCustomId(session, 'offset-minus'))
+        .setStyle(ButtonStyle.Secondary)
+        .setLabel('Lyrics −1s'),
+      new ButtonBuilder()
+        .setCustomId(playerCustomId(session, 'offset-plus'))
+        .setStyle(ButtonStyle.Secondary)
+        .setLabel('Lyrics +1s')
+    );
+  }
+  const firstRow = new ActionRowBuilder().addComponents(firstRowButtons);
 
   const repeatActive = !disabled && session.looping;
   const lyricsActive = !disabled && session.lyricsEnabled;
-  const secondRow = new ActionRowBuilder().addComponents(
+  const secondRowButtons = [
     new ButtonBuilder()
       .setCustomId(playerCustomId(session, 'stop'))
       .setStyle(ButtonStyle.Danger)
@@ -187,7 +204,18 @@ function buildPlayerPayload(session, { stopped = false } = {}) {
       .setEmoji('💾')
       .setLabel('Cache')
       .setDisabled(!disabled)
-  );
+  ];
+  if (!session.repeatCache && session.currentTrack?.source !== 'cache') {
+    secondRowButtons.push(
+      new ButtonBuilder()
+        .setCustomId(playerCustomId(session, 'autoplay'))
+        .setStyle(session.autoplay ? ButtonStyle.Primary : ButtonStyle.Secondary)
+        .setEmoji('🤖')
+        .setLabel('Autoplay')
+        .setDisabled(disabled)
+    );
+  }
+  const secondRow = new ActionRowBuilder().addComponents(secondRowButtons);
 
   return { embeds: [embed], components: [firstRow, secondRow] };
 }
@@ -216,11 +244,15 @@ async function writePlayerMessage(session, options = {}) {
     !session.playerMessage ||
     !activeChannel?.lastMessageId ||
     activeChannel.lastMessageId === session.playerMessage.id;
-  if (!options.force && signature === session.playerUiSignature && playerIsLastMessage) {
+  if (
+    !options.force &&
+    signature === session.playerUiSignature &&
+    (playerIsLastMessage || !options.allowRepost)
+  ) {
     return session.playerMessage;
   }
 
-  if (session.playerMessage && !playerIsLastMessage) {
+  if (session.playerMessage && !playerIsLastMessage && options.allowRepost) {
     try {
       await session.playerMessage.delete();
       session.playerMessage = null;
@@ -279,20 +311,46 @@ function requestPlayerUpdate(session, options = {}) {
   return update;
 }
 
-function startPlayerUi(session, channel) {
+function isPlayerLastMessage(session) {
+  const channel = session?.playerMessage?.channel || session?.lastChannel;
+  return Boolean(
+    session?.playerMessage &&
+    (!channel?.lastMessageId || channel.lastMessageId === session.playerMessage.id)
+  );
+}
+
+function schedulePlayerUiUpdate(session) {
+  stopPlayerUiUpdater(session);
+  if (!session?.currentTrack) return;
+
+  const delay = isPlayerLastMessage(session)
+    ? PLAYER_UPDATE_WHEN_LAST_MS
+    : PLAYER_UPDATE_WHEN_NOT_LAST_MS;
+  const allowRepost = !isPlayerLastMessage(session);
+  const expectedPlaybackGeneration = session.playbackGeneration;
+  session.playerUiTimer = setTimeout(async () => {
+    session.playerUiTimer = null;
+    try {
+      await requestPlayerUpdate(session, { expectedPlaybackGeneration, allowRepost });
+    } finally {
+      if (session.currentTrack && session.playbackGeneration === expectedPlaybackGeneration) {
+        schedulePlayerUiUpdate(session);
+      }
+    }
+  }, delay);
+  session.playerUiTimer.unref?.();
+}
+
+async function startPlayerUi(session, channel) {
   if (channel) session.lastChannel = channel;
   stopPlayerUiUpdater(session);
-  session.playerUiTimer = setInterval(() => {
-    requestPlayerUpdate(session, {
-      expectedPlaybackGeneration: session.playbackGeneration
-    }).catch(() => {});
-  }, PROGRESS_UPDATE_MS);
-  session.playerUiTimer.unref?.();
-  return requestPlayerUpdate(session, {
+  const message = await requestPlayerUpdate(session, {
     force: true,
     expectedPlaybackGeneration: session.playbackGeneration,
     channel
   });
+  schedulePlayerUiUpdate(session);
+  return message;
 }
 
 function stopPlayerUiUpdater(session) {
@@ -372,7 +430,7 @@ async function handlePlayerInteraction(interaction) {
   } else if (action === 'lyrics') {
     const { disableLyrics, enableLyrics } = require('./lyricsService');
     if (session.lyricsEnabled) disableLyrics(session);
-    else enableLyrics(session, session.lastChannel);
+    else enableLyrics(session, session.lastChannel, interaction);
   } else if (action === 'cache') {
     const { startCachePlayback } = require('./cacheService');
     const result = await startCachePlayback(session, guildId);
@@ -385,6 +443,25 @@ async function handlePlayerInteraction(interaction) {
         flags: MessageFlags.Ephemeral
       });
     }
+  } else if (action === 'offset-minus' || action === 'offset-plus') {
+    const direction = action === 'offset-plus' ? 1 : -1;
+    const currentOffset = Number(session.currentTrack?.lyricsOffset) || 0;
+    const nextOffset = Math.max(-15, Math.min(15, currentOffset + direction));
+    session.currentTrack.lyricsOffset = nextOffset;
+    const { updateTrackLyricsOffset } = require('../core/musicIndex');
+    updateTrackLyricsOffset(session.currentTrack.id, nextOffset, session.currentTrack.titleSan);
+    require('./lyricsService').wakeLyricsWorker(session);
+    await requestPlayerUpdate(session, { force: true });
+  } else if (action === 'autoplay') {
+    const { clearAutoplayTimer, scheduleAutoplayCheck } = require('./autoplaySchedulerService');
+    session.autoplay = !session.autoplay;
+    if (session.autoplay) {
+      session.autoplayClient = session.autoplayClient || interaction.client;
+      scheduleAutoplayCheck(session.autoplayClient, session.autoplayMessage, guildId, session);
+    } else {
+      clearAutoplayTimer(session);
+    }
+    await requestPlayerUpdate(session, { force: true });
   }
 
   if (action === 'repeat') await requestPlayerUpdate(session, { force: true });

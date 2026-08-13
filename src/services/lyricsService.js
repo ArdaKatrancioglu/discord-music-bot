@@ -1,7 +1,9 @@
 const LRCLIB_SEARCH_URL = 'https://lrclib.net/api/search';
+const { MessageFlags } = require('discord.js');
 const REQUEST_TIMEOUT_MS = 8000;
 const MAX_SLEEP_MS = 30000;
 const MIN_REQUEST_GAP_MS = 250;
+const LYRICS_SEARCH_VERSION = 2;
 const { getTrackFromCache, updateTrackLyrics } = require('../core/musicIndex');
 
 const lyricsCache = new Map();
@@ -105,6 +107,14 @@ function parseTrackIdentity(track) {
   }
 
   title = title
+    .replace(
+      /\s*[|｜]\s*(?:(?:official\s*)?(?:music\s*)?(?:video|audio|lyrics?|visuali[sz]er)|hq|hd|4k).*$/i,
+      ' '
+    )
+    .replace(
+      /\s+[-–—]\s*(?:(?:official\s*)?(?:music\s*)?(?:video|audio|lyrics?|visuali[sz]er)|hq|hd|4k).*$/i,
+      ' '
+    )
     .replace(
       /\s*[([][^\])]*(official\s*)?(music\s*)?(video|audio|lyrics?|visuali[sz]er|hq|hd|4k)[^\])]*[)\]]\s*/gi,
       ' '
@@ -240,6 +250,14 @@ function readPersistentLyrics(track) {
   if (!cached) return { hit: false, libraryTrack };
 
   if (cached.status === 'not_found') {
+    if (cached.searchVersion !== LYRICS_SEARCH_VERSION) {
+      console.info('[Lyrics Cache] Ignoring stale not_found result.', {
+        track: trackLabel(track),
+        cachedSearchVersion: cached.searchVersion ?? null,
+        currentSearchVersion: LYRICS_SEARCH_VERSION
+      });
+      return { hit: false, libraryTrack };
+    }
     debugLog(`[Lyrics Cache] Persistent not_found hit for track ${libraryTrack.id}.`);
     return { hit: true, lines: null, libraryTrack };
   }
@@ -278,7 +296,8 @@ function writePersistentLyrics(libraryTrack, lines) {
   } else {
     lyrics = {
       source: 'lrclib',
-      status: 'not_found'
+      status: 'not_found',
+      searchVersion: LYRICS_SEARCH_VERSION
     };
   }
 
@@ -288,6 +307,7 @@ function writePersistentLyrics(libraryTrack, lines) {
 async function fetchSyncedLyrics(track, signal) {
   const identity = parseTrackIdentity(track);
   const key = cacheKey(identity);
+  const attempts = [];
   debugLog('[Lyrics] Track metadata resolved for search:', {
     sourceTrack: trackLabel(track),
     rawTitle: track?.title || null,
@@ -301,12 +321,36 @@ async function fetchSyncedLyrics(track, signal) {
 
   const persistent = readPersistentLyrics(track);
   if (persistent.hit) {
+    if (!persistent.lines) {
+      console.warn(
+        '[Lyrics Diagnostics] Skipping LRCLIB because a current not_found cache exists.',
+        {
+          sourceTrack: trackLabel(track),
+          parsedIdentity: identity,
+          cacheKey: key,
+          searchVersion: LYRICS_SEARCH_VERSION,
+          cacheLayer: 'downloadedMusic/index.json'
+        }
+      );
+    }
     lyricsCache.set(key, persistent.lines);
     return persistent.lines;
   }
 
   if (lyricsCache.has(key)) {
     const cached = lyricsCache.get(key);
+    if (!cached) {
+      console.warn(
+        '[Lyrics Diagnostics] Skipping LRCLIB because an in-memory not_found cache exists.',
+        {
+          sourceTrack: trackLabel(track),
+          parsedIdentity: identity,
+          cacheKey: key,
+          searchVersion: LYRICS_SEARCH_VERSION,
+          cacheLayer: 'memory'
+        }
+      );
+    }
     debugLog(
       `[Lyrics] Cache hit: ${cached ? `${cached.length} parsed line(s)` : 'no synced lyrics'}`
     );
@@ -324,6 +368,7 @@ async function fetchSyncedLyrics(track, signal) {
     }
 
     debugLog(`[Lyrics] Queued LRCLIB request (${label}):`, url.toString());
+    let requestElapsedMs = null;
     const response = await scheduleLrclibRequest(async () => {
       debugLog(`[Lyrics] Requesting LRCLIB (${label}):`, url.toString());
       const requestStartedAt = Date.now();
@@ -336,24 +381,54 @@ async function fetchSyncedLyrics(track, signal) {
         }
       });
 
+      requestElapsedMs = Date.now() - requestStartedAt;
       debugLog(
-        `[Lyrics] LRCLIB ${label} search responded HTTP ${result.status} in ${Date.now() - requestStartedAt}ms.`
+        `[Lyrics] LRCLIB ${label} search responded HTTP ${result.status} in ${requestElapsedMs}ms.`
       );
       rememberRateLimit(result);
       return result;
     }, signal);
 
     if (!response.ok) throw new Error(`LRCLIB returned HTTP ${response.status}`);
-    return response.json();
+    const responseBody = await response.json();
+    const candidates = [];
+    if (Array.isArray(responseBody)) {
+      for (const candidate of responseBody.slice(0, 10)) {
+        const scores = getScoreDetails(candidate || {}, identity);
+        candidates.push({
+          id: candidate?.id ?? null,
+          trackName: candidate?.trackName ?? null,
+          artistName: candidate?.artistName ?? null,
+          albumName: candidate?.albumName ?? null,
+          duration: candidate?.duration ?? null,
+          durationDifference: scores.durationDifference,
+          hasSyncedLyrics: Boolean(candidate?.syncedLyrics?.trim()),
+          hasPlainLyrics: Boolean(candidate?.plainLyrics?.trim()),
+          score: Number(scores.total.toFixed(2))
+        });
+      }
+    }
+    attempts.push({
+      label,
+      url: url.toString(),
+      httpStatus: response.status,
+      elapsedMs: requestElapsedMs,
+      resultCount: Array.isArray(responseBody) ? responseBody.length : null,
+      candidates
+    });
+    return responseBody;
   };
 
   let body = await search(identity, 'metadata');
-  if (Array.isArray(body) && body.length === 0 && identity.artist) {
+  if (!selectBestResult(body, identity) && identity.artist) {
     const fallbackQuery = `${identity.artist} - ${identity.title}`;
-    debugLog('[Lyrics] Metadata search returned no candidates; trying keyword fallback.', {
+    debugLog('[Lyrics] Metadata search returned no synced candidate; trying keyword fallback.', {
       fallbackQuery
     });
     body = await search({ query: fallbackQuery }, 'keyword fallback');
+  }
+  if (!selectBestResult(body, identity)) {
+    body = await search({ title: identity.title }, 'title-only fallback');
   }
 
   logSearchResults(body, identity);
@@ -364,9 +439,27 @@ async function fetchSyncedLyrics(track, signal) {
     const plainOnlyCount = Array.isArray(body)
       ? body.filter((item) => item?.plainLyrics?.trim() && !item?.syncedLyrics?.trim()).length
       : 0;
-    console.warn('[Lyrics] No candidate with syncedLyrics was found.', {
-      totalCandidates: Array.isArray(body) ? body.length : 0,
-      plainLyricsOnlyCandidates: plainOnlyCount
+    console.warn('[Lyrics Diagnostics] No candidate with synced lyrics was selected.', {
+      sourceTrack: trackLabel(track),
+      rawMetadata: {
+        title: track?.title || null,
+        displayTitle: track?.displayTitle || null,
+        artist: track?.artist || null,
+        uploader: track?.uploader || null,
+        album: track?.album || null,
+        duration: track?.duration || null,
+        url: track?.url || null
+      },
+      parsedIdentity: identity,
+      cacheKey: key,
+      searchVersion: LYRICS_SEARCH_VERSION,
+      attempts,
+      finalResultCount: Array.isArray(body) ? body.length : null,
+      plainLyricsOnlyCandidates: plainOnlyCount,
+      reason:
+        Array.isArray(body) && body.length === 0
+          ? 'all searches returned zero results'
+          : 'no result contained syncedLyrics'
     });
   } else if (!lines.length) {
     console.warn(
@@ -406,6 +499,13 @@ function getPlaybackPosition(session) {
   if (!session?.trackStartedAt) return 0;
   const pausedAt = session.isPaused && session.pausedAt ? session.pausedAt : Date.now();
   return Math.max(0, (pausedAt - session.trackStartedAt - (session.pausedDurationMs || 0)) / 1000);
+}
+
+function getLyricsPosition(session) {
+  return Math.max(
+    0,
+    getPlaybackPosition(session) + (Number(session?.currentTrack?.lyricsOffset) || 0)
+  );
 }
 
 function findActiveLineIndex(lines, position) {
@@ -488,13 +588,30 @@ async function runLyricsWorker(session, track, playbackGeneration, lyricsGenerat
       debugLog(`[Lyrics] Ignoring stale LRCLIB result for ${trackLabel(track)}.`);
       return;
     }
-    console.warn('[Lyrics] LRCLIB request failed:', error.message);
+    console.warn('[Lyrics Diagnostics] LRCLIB request failed.', {
+      sourceTrack: trackLabel(track),
+      rawMetadata: {
+        title: track?.title || null,
+        displayTitle: track?.displayTitle || null,
+        artist: track?.artist || null,
+        uploader: track?.uploader || null,
+        album: track?.album || null,
+        duration: track?.duration || null,
+        url: track?.url || null
+      },
+      parsedIdentity: parseTrackIdentity(track),
+      errorName: error.name,
+      errorMessage: error.message,
+      errorCause: error.cause?.message || null
+    });
+    session.lyricsEnabled = false;
     session.lyricsStatus = 'unavailable';
     session.lyricsLines = null;
     session.currentLyricIndex = -1;
     require('./playerUiService')
       .requestPlayerUpdate(session, { expectedPlaybackGeneration: playbackGeneration })
       .catch(() => {});
+    notifyLyricsUnavailable(session, 'Lyrics could not be loaded for this track.');
     return;
   }
 
@@ -504,15 +621,18 @@ async function runLyricsWorker(session, track, playbackGeneration, lyricsGenerat
   }
   if (!lines) {
     console.warn(`[Lyrics] Giving up for ${trackLabel(track)}: no synchronized lyrics available.`);
+    session.lyricsEnabled = false;
     session.lyricsStatus = 'unavailable';
     session.lyricsLines = null;
     session.currentLyricIndex = -1;
     require('./playerUiService')
       .requestPlayerUpdate(session, { expectedPlaybackGeneration: playbackGeneration })
       .catch(() => {});
+    notifyLyricsUnavailable(session, 'No lyrics found — Bu parça için lyrics bulamadım.');
     return;
   }
 
+  session.lyricsInteraction = null;
   session.lyricsStatus = 'synced';
   session.lyricsLines = lines;
   session.currentLyricIndex = -1;
@@ -525,7 +645,7 @@ async function runLyricsWorker(session, track, playbackGeneration, lyricsGenerat
     lineCount: lines.length
   });
   while (isWorkerCurrent(session, track, playbackGeneration, lyricsGeneration) && !signal.aborted) {
-    const position = getPlaybackPosition(session);
+    const position = getLyricsPosition(session);
     const activeIndex = findActiveLineIndex(lines, position);
 
     if (activeIndex !== lastSentIndex) {
@@ -544,7 +664,7 @@ async function runLyricsWorker(session, track, playbackGeneration, lyricsGenerat
     const nextIndex = Math.max(0, lastSentIndex + 1);
     const delayMs = session.isPaused
       ? MAX_SLEEP_MS
-      : Math.max(10, (lines[nextIndex].timestamp - getPlaybackPosition(session)) * 1000);
+      : Math.max(10, (lines[nextIndex].timestamp - getLyricsPosition(session)) * 1000);
     await abortableWait(session, lyricsGeneration, delayMs, signal);
   }
 }
@@ -578,10 +698,18 @@ function startLyricsWorker(session) {
   });
 }
 
-function enableLyrics(session, channel) {
+function notifyLyricsUnavailable(session, content) {
+  const interaction = session?.lyricsInteraction;
+  session.lyricsInteraction = null;
+  if (!interaction) return;
+  interaction.followUp({ content, flags: MessageFlags.Ephemeral }).catch(() => {});
+}
+
+function enableLyrics(session, channel, interaction = null) {
   debugLog(`[Lyrics] Enabled for ${trackLabel(session?.currentTrack)}.`);
   session.lyricsEnabled = true;
   session.lyricsChannel = channel;
+  session.lyricsInteraction = interaction;
   startLyricsWorker(session);
   require('./playerUiService')
     .requestPlayerUpdate(session, { force: true })
@@ -591,6 +719,7 @@ function enableLyrics(session, channel) {
 function disableLyrics(session) {
   debugLog(`[Lyrics] Disabled for ${trackLabel(session?.currentTrack)}.`);
   session.lyricsEnabled = false;
+  session.lyricsInteraction = null;
   stopLyricsWorker(session);
   require('./playerUiService')
     .requestPlayerUpdate(session, { force: true })
@@ -601,6 +730,7 @@ module.exports = {
   disableLyrics,
   enableLyrics,
   findActiveLineIndex,
+  getLyricsPosition,
   getPlaybackPosition,
   parseLrc,
   parseTrackIdentity,

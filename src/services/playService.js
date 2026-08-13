@@ -14,6 +14,10 @@ const { isSpotifyPlaylistUrl, handleSpotifyPlaylist } = require('./spotifyPlayli
 
 async function handlePlayRequest(client, message, query) {
   const queryIsUrl = /^(https?:\/\/|www\.)/i.test(query);
+  const requester = {
+    id: message.author.id,
+    name: message.member?.displayName || message.author.globalName || message.author.username
+  };
   await message.reply(
     queryIsUrl
       ? { content: `🎵 Request: <${query}>`, flags: MessageFlags.SuppressEmbeds }
@@ -101,7 +105,8 @@ async function handlePlayRequest(client, message, query) {
       artist: meta.artist || cached.artist || null,
       uploader: meta.uploader || cached.uploader || null,
       album: meta.album || cached.album || null,
-      thumbnail: meta.thumbnail || cached.thumbnail || null
+      thumbnail: meta.thumbnail || cached.thumbnail || null,
+      requester
     };
     const result = queueTrackIntoSession(session, targetGuildId, track);
     if (!result.startedImmediately) {
@@ -149,7 +154,8 @@ async function handlePlayRequest(client, message, query) {
       ...libraryTrack,
       artist: meta.artist || null,
       uploader: meta.uploader || null,
-      album: meta.album || null
+      album: meta.album || null,
+      requester
     };
 
     const queueResult = queueTrackIntoSession(session, targetGuildId, track);

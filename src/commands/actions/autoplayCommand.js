@@ -2,7 +2,11 @@ const { sessions } = require('../../core/sessionManager');
 const { resolveGuildIdForBoundAwareCommand } = require('../../services/messageContextService');
 const { findNextAutoplayTrack } = require('../../services/autoplayRuntimeService');
 const { handlePlayRequest } = require('../../services/playService');
-const { scheduleAutoplayCheck } = require('../../services/autoplaySchedulerService');
+const {
+  clearAutoplayTimer,
+  scheduleAutoplayCheck
+} = require('../../services/autoplaySchedulerService');
+const { requestPlayerUpdate } = require('../../services/playerUiService');
 
 module.exports = {
   async execute({ client, message, content }) {
@@ -52,6 +56,7 @@ module.exports = {
 
     if (session.autoplay) {
       scheduleAutoplayCheck(client, message, guildId, session);
+      requestPlayerUpdate(session, { force: true }).catch(() => {});
 
       return message.reply(
         '🤖 Autoplay enabled.\n' +
@@ -59,6 +64,8 @@ module.exports = {
       );
     }
 
+    clearAutoplayTimer(session);
+    requestPlayerUpdate(session, { force: true }).catch(() => {});
     return message.reply('➡️ Autoplay disabled.');
   }
 };

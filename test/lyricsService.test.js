@@ -5,6 +5,7 @@ const {
   disableLyrics,
   enableLyrics,
   findActiveLineIndex,
+  getLyricsPosition,
   getPlaybackPosition,
   parseLrc,
   parseTrackIdentity,
@@ -56,6 +57,14 @@ test('getPlaybackPosition fallback subtracts accumulated and current pause time'
   assert.ok(Math.abs(getPlaybackPosition(session) - 15) < 0.05);
 });
 
+test('getLyricsPosition applies the saved per-track offset', () => {
+  const session = {
+    currentTrack: { lyricsOffset: -2 },
+    player: { state: { resource: { playbackDuration: 13500 } } }
+  };
+  assert.equal(getLyricsPosition(session), 11.5);
+});
+
 test('parseTrackIdentity removes common YouTube title decorations', () => {
   assert.deepEqual(
     parseTrackIdentity({
@@ -101,6 +110,31 @@ test('parseTrackIdentity removes standalone quality labels', () => {
       artist: 'Five Finger Death Punch',
       album: '',
       duration: 248
+    }
+  );
+});
+
+test('parseTrackIdentity removes pipe-delimited YouTube suffixes', () => {
+  assert.deepEqual(
+    parseTrackIdentity({
+      title: 'Hadise - Ara Beni | Official Visualizer',
+      uploader: 'Hadise',
+      duration: 145
+    }),
+    { title: 'Ara Beni', artist: 'Hadise', album: '', duration: 145 }
+  );
+
+  assert.deepEqual(
+    parseTrackIdentity({
+      title: 'manifest X Ajda Pekkan - Hileli | Official Music Video',
+      uploader: 'manifest',
+      duration: 163
+    }),
+    {
+      title: 'Hileli',
+      artist: 'manifest X Ajda Pekkan',
+      album: '',
+      duration: 163
     }
   );
 });
@@ -241,6 +275,49 @@ test('lyrics search falls back to a keyword query when metadata search is empty'
     assert.match(requestedUrls[0], /artist_name=Fallback\+Artist/);
     assert.match(requestedUrls[1], /q=Fallback\+Artist\+-\+Unique\+Fallback\+Song/);
     assert.doesNotMatch(requestedUrls[1], /artist_name=/);
+  } finally {
+    disableLyrics(session);
+    global.fetch = originalFetch;
+  }
+});
+
+test('missing lyrics disables lyrics and responds ephemerally to the requesting interaction', async () => {
+  const originalFetch = global.fetch;
+  const notices = [];
+  const track = { title: 'Unique Missing Lyrics Track', duration: 123 };
+  const session = {
+    currentTrack: track,
+    guildId: 'guild-1',
+    playbackGeneration: 1,
+    lyricsGeneration: 0,
+    lyricsEnabled: false,
+    player: { state: { resource: { playbackDuration: 1000 } } },
+    playerMessage: {
+      id: 'message-1',
+      channelId: 'channel-1',
+      async edit() {
+        return this;
+      }
+    }
+  };
+  global.fetch = async () => ({
+    ok: true,
+    status: 200,
+    async json() {
+      return [];
+    }
+  });
+
+  try {
+    enableLyrics(session, null, {
+      async followUp(payload) {
+        notices.push(payload);
+      }
+    });
+    await session.lyricsTask;
+    assert.equal(session.lyricsEnabled, false);
+    assert.equal(notices.length, 1);
+    assert.match(notices[0].content, /No lyrics found/);
   } finally {
     disableLyrics(session);
     global.fetch = originalFetch;

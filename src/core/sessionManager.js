@@ -142,6 +142,7 @@ function createSession(guildId, channelId, adapterCreator) {
     lyricsAbortController: null,
     lyricsWake: null,
     lyricsTask: null,
+    lyricsInteraction: null,
 
     playerMessage: null,
     playerMessageId: null,

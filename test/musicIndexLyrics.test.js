@@ -40,13 +40,14 @@ test('updateTrackLyrics changes only the matching track lyrics field', () => {
   );
 
   const script = `
-    const { updateTrackLyrics } = require(${JSON.stringify(musicIndexModule)});
+    const { updateTrackLyrics, updateTrackLyricsOffset } = require(${JSON.stringify(musicIndexModule)});
     const updated = updateTrackLyrics('track-1', {
       source: 'lrclib',
       status: 'found',
       syncedLyrics: [{ time: 12.34, text: 'First line' }]
     });
-    if (!updated) process.exit(1);
+    const offsetUpdated = updateTrackLyricsOffset('track-1', 2);
+    if (!updated || !offsetUpdated) process.exit(1);
   `;
   const child = spawnSync(process.execPath, ['-e', script], {
     cwd: tempDirectory,
@@ -64,7 +65,8 @@ test('updateTrackLyrics changes only the matching track lyrics field', () => {
         source: 'lrclib',
         status: 'found',
         syncedLyrics: [{ time: 12.34, text: 'First line' }]
-      }
+      },
+      lyricsOffset: 2
     });
     assert.deepEqual(updatedIndex.tracks[1], originalIndex.tracks[1]);
     assert.equal(updatedIndex.version, originalIndex.version);

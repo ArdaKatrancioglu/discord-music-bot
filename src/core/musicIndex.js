@@ -132,6 +132,31 @@ function updateTrackLyrics(trackId, lyrics) {
   return true;
 }
 
+function updateTrackLyricsOffset(trackId, lyricsOffset, titleSan) {
+  if (!trackId && !titleSan) return false;
+
+  let latestIndex;
+  try {
+    latestIndex = JSON.parse(fs.readFileSync(indexPath, 'utf8'));
+  } catch (error) {
+    console.warn('[Lyrics Offset] Could not read index.json:', error.message);
+    return false;
+  }
+
+  const track = latestIndex?.tracks?.find(
+    (item) => (trackId && item.id === trackId) || (titleSan && item.titleSan === titleSan)
+  );
+  if (!track) {
+    console.warn(`[Lyrics Offset] Track ${trackId || titleSan} was not found in index.json.`);
+    return false;
+  }
+
+  track.lyricsOffset = Number(lyricsOffset) || 0;
+  if (!saveIndex(latestIndex)) return false;
+  index = latestIndex;
+  return true;
+}
+
 function listAllCachedTracksUnique() {
   return [...index.tracks];
 }
@@ -144,5 +169,6 @@ module.exports = {
   getTrackFromCache,
   addTrackToCache,
   updateTrackLyrics,
+  updateTrackLyricsOffset,
   listAllCachedTracksUnique
 };

@@ -27,9 +27,11 @@ async function startCachePlayback(session, guildId) {
     return { startedImmediately: false, reason: 'empty', trackCount: 0 };
   }
 
-  session.cachePool = all;
+  session.autoplay = false;
+  require('./autoplaySchedulerService').clearAutoplayTimer(session);
+  session.cachePool = all.map((track) => ({ ...track, source: 'cache' }));
   session.repeatCache = true;
-  session.queue = shuffle([...all]);
+  session.queue = shuffle([...session.cachePool]);
   await playNext(guildId);
   return { startedImmediately: true, reason: null, trackCount: all.length };
 }
@@ -67,6 +69,8 @@ async function handleCacheCommand(client, message, content) {
 
   const session = ensureSession(targetGuildId, targetChannelId, guild.voiceAdapterCreator);
   session.lastChannel = message.channel;
+  session.autoplayClient = client;
+  session.autoplayMessage = message;
 
   if (arg === 'off') {
     session.repeatCache = false;
@@ -84,9 +88,11 @@ async function handleCacheCommand(client, message, content) {
     await startCachePlayback(session, targetGuildId);
     return message.reply(`🔁 Cache initialized. Number of parts: **${all.length}**`);
   } else {
-    session.cachePool = all;
+    session.autoplay = false;
+    require('./autoplaySchedulerService').clearAutoplayTimer(session);
+    session.cachePool = all.map((track) => ({ ...track, source: 'cache' }));
     session.repeatCache = true;
-    session.queue = shuffle([...all]);
+    session.queue = shuffle([...session.cachePool]);
     return message.reply(
       `🔁 Cache (∞) is enabled. **${all.length}** tracks have been added to the queue and looping is on.`
     );
