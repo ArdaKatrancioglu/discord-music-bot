@@ -138,19 +138,24 @@ test('selectBestResult prioritizes artist and close duration among synced result
 
 test('lyrics worker starts from the current playback line instead of the beginning', async () => {
   const originalFetch = global.fetch;
-  const sent = [];
+  const renderedDescriptions = [];
   const track = { title: 'Unique Worker Test Song', artist: 'Test Artist', duration: 180 };
   const session = {
     currentTrack: track,
     playbackGeneration: 1,
     lyricsGeneration: 0,
     lyricsEnabled: false,
-    player: { state: { resource: { playbackDuration: 135400 } } }
-  };
-  const channel = {
-    async send(message) {
-      sent.push(message);
-      disableLyrics(session);
+    guildId: 'guild-1',
+    player: { state: { resource: { playbackDuration: 135400 } } },
+    playerMessage: {
+      id: 'message-1',
+      channelId: 'channel-1',
+      async edit(payload) {
+        const description = payload.embeds[0].toJSON().description;
+        renderedDescriptions.push(description);
+        if (description.includes('line B')) disableLyrics(session);
+        return this;
+      }
     }
   };
 
@@ -170,10 +175,11 @@ test('lyrics worker starts from the current playback line instead of the beginni
   });
 
   try {
-    enableLyrics(session, channel);
+    enableLyrics(session, null);
     const task = session.lyricsTask;
     await task;
-    assert.deepEqual(sent, ['♪ line B']);
+    assert.ok(renderedDescriptions.some((description) => description.includes('▶ **line B**')));
+    assert.ok(renderedDescriptions.every((description) => !description.includes('▶ **line A**')));
   } finally {
     disableLyrics(session);
     global.fetch = originalFetch;
@@ -193,7 +199,18 @@ test('lyrics search falls back to a keyword query when metadata search is empty'
     playbackGeneration: 1,
     lyricsGeneration: 0,
     lyricsEnabled: false,
-    player: { state: { resource: { playbackDuration: 1500 } } }
+    guildId: 'guild-1',
+    player: { state: { resource: { playbackDuration: 1500 } } },
+    playerMessage: {
+      id: 'message-1',
+      channelId: 'channel-1',
+      async edit(payload) {
+        if (payload.embeds[0].toJSON().description.includes('fallback line')) {
+          disableLyrics(session);
+        }
+        return this;
+      }
+    }
   };
 
   global.fetch = async (url) => {
@@ -216,11 +233,7 @@ test('lyrics search falls back to a keyword query when metadata search is empty'
   };
 
   try {
-    enableLyrics(session, {
-      async send() {
-        disableLyrics(session);
-      }
-    });
+    enableLyrics(session, null);
     await session.lyricsTask;
 
     assert.equal(requestedUrls.length, 2);

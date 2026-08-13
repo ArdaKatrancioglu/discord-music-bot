@@ -34,9 +34,7 @@ function scheduleIdleDisconnect(guildId, session) {
     if (activeSession.autoplay) return;
 
     try {
-      await activeSession.lastChannel?.send(
-        "🛑 Since ya'll doing nothin' for 2 minutes I'm out."
-      );
+      await activeSession.lastChannel?.send("🛑 Since ya'll doing nothin' for 2 minutes I'm out.");
     } catch {}
 
     clearAutoplayTimer(activeSession);
@@ -67,6 +65,7 @@ async function disconnectIfChannelEmpty(guildId, guild) {
   clearIdleDisconnectTimer(session);
   session.lyricsEnabled = false;
   stopLyricsWorker(session);
+  require('../services/playerUiService').stopPlayerUiUpdater(session);
 
   try {
     session.player.stop();
@@ -103,6 +102,7 @@ function createSession(guildId, channelId, adapterCreator) {
   connection.subscribe(player);
 
   const session = {
+    guildId,
     connection,
     player,
 
@@ -133,12 +133,22 @@ function createSession(guildId, channelId, adapterCreator) {
     playbackGeneration: 0,
     idleDisconnectTimer: null,
 
-    lyricsEnabled: false,
+    lyricsEnabled: true,
     lyricsChannel: null,
+    lyricsStatus: 'loading',
+    lyricsLines: null,
+    currentLyricIndex: -1,
     lyricsGeneration: 0,
     lyricsAbortController: null,
     lyricsWake: null,
     lyricsTask: null,
+
+    playerMessage: null,
+    playerMessageId: null,
+    playerChannelId: null,
+    playerUiSignature: null,
+    playerUiUpdateQueue: null,
+    playerUiTimer: null,
 
     recentHistory: [],
     recentHistoryLimit: 5
@@ -194,6 +204,10 @@ async function playNext(guildId) {
     session.currentTrack = null;
     clearAutoplayTimer(session);
 
+    const { requestPlayerUpdate, stopPlayerUiUpdater } = require('../services/playerUiService');
+    stopPlayerUiUpdater(session);
+    requestPlayerUpdate(session, { force: true, stopped: true }).catch(() => {});
+
     if (channel?.send) {
       try {
         await channel.send('🛑 Queue is empty. Add more with !play <song or URL>');
@@ -240,13 +254,6 @@ async function playNext(guildId) {
 
   scheduleAutoplayCheck(session.autoplayClient, session.autoplayMessage, guildId, session);
 
-  if (channel?.send) {
-    try {
-      const link = track.url ? `\n🔗 ${track.url}` : '';
-      await channel.send(`▶️ Now playing: **${track.title}**${link}`);
-    } catch {}
-  }
-
   const isWebm = track.filePath.endsWith('.webm');
 
   session.player.play(
@@ -255,6 +262,8 @@ async function playNext(guildId) {
     })
   );
 
+  const { startPlayerUi } = require('../services/playerUiService');
+  startPlayerUi(session, channel).catch(() => {});
   if (session.lyricsEnabled) startLyricsWorker(session);
 }
 
@@ -264,6 +273,7 @@ function destroyAllConnections() {
     clearIdleDisconnectTimer(session);
     session.lyricsEnabled = false;
     stopLyricsWorker(session);
+    require('../services/playerUiService').stopPlayerUiUpdater(session);
 
     try {
       session.connection?.destroy();

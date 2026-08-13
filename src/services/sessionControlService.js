@@ -10,6 +10,9 @@ function pauseSession(session) {
     session.isPaused = true;
     session.pausedAt = Date.now();
     wakeLyricsWorker(session);
+    require('./playerUiService')
+      .requestPlayerUpdate(session, { force: true })
+      .catch(() => {});
   }
 }
 
@@ -21,6 +24,9 @@ function resumeSession(session) {
       session.pausedAt = null;
       session.isPaused = false;
       wakeLyricsWorker(session);
+      require('./playerUiService')
+        .requestPlayerUpdate(session, { force: true })
+        .catch(() => {});
     }
   } catch {}
 }
@@ -46,6 +52,7 @@ function stopSession(session) {
   session.trackStartedAt = null;
   session.pausedAt = null;
   session.pausedDurationMs = 0;
+  session.playbackGeneration++;
 
   try {
     session.player.stop();
@@ -53,6 +60,10 @@ function stopSession(session) {
 
   session.currentTrack = null;
   session.isPaused = false;
+  require('./playerUiService').stopPlayerUiUpdater(session);
+  require('./playerUiService')
+    .requestPlayerUpdate(session, { force: true, stopped: true })
+    .catch(() => {});
 }
 
 function skipSession(session) {

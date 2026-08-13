@@ -17,6 +17,23 @@ function queueTrackIntoSession(session, guildId, track) {
   }
 }
 
+async function startCachePlayback(session, guildId) {
+  if (session.currentTrack) {
+    return { startedImmediately: false, reason: 'playing', trackCount: 0 };
+  }
+
+  const all = listAllCachedTracksUnique();
+  if (!all.length) {
+    return { startedImmediately: false, reason: 'empty', trackCount: 0 };
+  }
+
+  session.cachePool = all;
+  session.repeatCache = true;
+  session.queue = shuffle([...all]);
+  await playNext(guildId);
+  return { startedImmediately: true, reason: null, trackCount: all.length };
+}
+
 async function handleCacheCommand(client, message, content) {
   const arg = content.split(/\s+/)[1]?.toLowerCase();
   let targetGuildId, targetChannelId;
@@ -63,14 +80,13 @@ async function handleCacheCommand(client, message, content) {
       'ℹ️ There are no songs in the cache to play. Play some songs to cache it bitch. Jkjk'
     );
 
-  session.cachePool = all;
-  session.repeatCache = true;
-  session.queue = shuffle([...all]);
-
   if (!session.currentTrack) {
-    playNext(targetGuildId);
+    await startCachePlayback(session, targetGuildId);
     return message.reply(`🔁 Cache initialized. Number of parts: **${all.length}**`);
   } else {
+    session.cachePool = all;
+    session.repeatCache = true;
+    session.queue = shuffle([...all]);
     return message.reply(
       `🔁 Cache (∞) is enabled. **${all.length}** tracks have been added to the queue and looping is on.`
     );
@@ -79,5 +95,6 @@ async function handleCacheCommand(client, message, content) {
 
 module.exports = {
   queueTrackIntoSession,
+  startCachePlayback,
   handleCacheCommand
 };

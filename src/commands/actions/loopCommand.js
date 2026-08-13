@@ -1,5 +1,6 @@
 const { sessions } = require('../../core/sessionManager');
 const { resolveGuildIdForBoundAwareCommand } = require('../../services/messageContextService');
+const { requestPlayerUpdate } = require('../../services/playerUiService');
 
 module.exports = {
   async execute({ client, message, content }) {
@@ -23,6 +24,7 @@ module.exports = {
       session.loopCount = 0;
       session.loopQueue = [];
       session.loopIndex = 0;
+      requestPlayerUpdate(session, { force: true }).catch(() => {});
       return message.reply('➡️ Loop disabled.');
     }
 
@@ -40,6 +42,7 @@ module.exports = {
     session.loopCount = times > 0 ? times : 0;
     session.loopQueue = [session.currentTrack, ...session.queue.slice(0, times)];
     session.loopIndex = 0;
+    requestPlayerUpdate(session, { force: true }).catch(() => {});
     await message.reply(`🔂 Loop enabled for ${session.loopQueue.length} tracks.`);
     const previewTracks = session.loopQueue.slice(0, 5);
     const remainingTracks = session.loopQueue.slice(5);

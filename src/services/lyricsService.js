@@ -489,11 +489,12 @@ async function runLyricsWorker(session, track, playbackGeneration, lyricsGenerat
       return;
     }
     console.warn('[Lyrics] LRCLIB request failed:', error.message);
-    try {
-      await session.lyricsChannel?.send('Lyrics alınırken bir hata oluştu.');
-    } catch {
-      // Lyrics is optional; Discord send failures must not affect playback.
-    }
+    session.lyricsStatus = 'unavailable';
+    session.lyricsLines = null;
+    session.currentLyricIndex = -1;
+    require('./playerUiService')
+      .requestPlayerUpdate(session, { expectedPlaybackGeneration: playbackGeneration })
+      .catch(() => {});
     return;
   }
 
@@ -503,14 +504,18 @@ async function runLyricsWorker(session, track, playbackGeneration, lyricsGenerat
   }
   if (!lines) {
     console.warn(`[Lyrics] Giving up for ${trackLabel(track)}: no synchronized lyrics available.`);
-    try {
-      await session.lyricsChannel?.send('Bu şarkı için senkronize lyrics bulunamadı.');
-    } catch {
-      // Lyrics is optional; Discord send failures must not affect playback.
-    }
+    session.lyricsStatus = 'unavailable';
+    session.lyricsLines = null;
+    session.currentLyricIndex = -1;
+    require('./playerUiService')
+      .requestPlayerUpdate(session, { expectedPlaybackGeneration: playbackGeneration })
+      .catch(() => {});
     return;
   }
 
+  session.lyricsStatus = 'synced';
+  session.lyricsLines = lines;
+  session.currentLyricIndex = -1;
   let lastSentIndex = -1;
   debugLog('[Lyrics] Synchronization started.', {
     track: trackLabel(track),
@@ -525,18 +530,13 @@ async function runLyricsWorker(session, track, playbackGeneration, lyricsGenerat
 
     if (activeIndex !== lastSentIndex) {
       lastSentIndex = activeIndex;
-      if (activeIndex >= 0) {
-        debugLog('[Lyrics] Sending synchronized line.', {
-          lineIndex: activeIndex,
-          lineTimestamp: formatSeconds(lines[activeIndex].timestamp),
-          playbackPosition: formatSeconds(position),
-          delay: formatSeconds(position - lines[activeIndex].timestamp)
+      session.currentLyricIndex = activeIndex;
+      try {
+        await require('./playerUiService').requestPlayerUpdate(session, {
+          expectedPlaybackGeneration: playbackGeneration
         });
-        try {
-          await session.lyricsChannel?.send(`♪ ${lines[activeIndex].text}`);
-        } catch (error) {
-          console.warn('[Lyrics] Could not send lyrics line:', error.message);
-        }
+      } catch (error) {
+        console.warn('[Lyrics] Could not update player UI:', error.message);
       }
     }
 
@@ -557,6 +557,9 @@ function startLyricsWorker(session) {
   const playbackGeneration = session.playbackGeneration;
   const lyricsGeneration = session.lyricsGeneration;
   const controller = new AbortController();
+  session.lyricsStatus = 'loading';
+  session.lyricsLines = null;
+  session.currentLyricIndex = -1;
   debugLog('[Lyrics] Starting worker.', {
     track: trackLabel(track),
     playbackGeneration,
@@ -580,12 +583,18 @@ function enableLyrics(session, channel) {
   session.lyricsEnabled = true;
   session.lyricsChannel = channel;
   startLyricsWorker(session);
+  require('./playerUiService')
+    .requestPlayerUpdate(session, { force: true })
+    .catch(() => {});
 }
 
 function disableLyrics(session) {
   debugLog(`[Lyrics] Disabled for ${trackLabel(session?.currentTrack)}.`);
   session.lyricsEnabled = false;
   stopLyricsWorker(session);
+  require('./playerUiService')
+    .requestPlayerUpdate(session, { force: true })
+    .catch(() => {});
 }
 
 module.exports = {

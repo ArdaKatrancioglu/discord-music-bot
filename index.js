@@ -5,10 +5,8 @@ const { generateDependencyReport } = require('@discordjs/voice');
 const { Client, GatewayIntentBits, Partials } = require('discord.js');
 
 const { handleMessage } = require('./src/commands/commandHandler');
-const {
-  destroyAllConnections,
-  disconnectIfChannelEmpty
-} = require('./src/core/sessionManager');
+const { handlePlayerInteraction } = require('./src/services/playerUiService');
+const { destroyAllConnections, disconnectIfChannelEmpty } = require('./src/core/sessionManager');
 const { exec } = require('child_process');
 
 const TOKEN = process.env.TOKEN;
@@ -64,6 +62,14 @@ client.once('ready', () => {
 client.on('messageCreate', (message) => {
   // Tüm logic commandHandler içinde
   handleMessage(client, message);
+});
+
+client.on('interactionCreate', async (interaction) => {
+  try {
+    await handlePlayerInteraction(interaction);
+  } catch (error) {
+    console.error('[Player UI] Interaction failed:', error);
+  }
 });
 
 client.on('voiceStateUpdate', async (oldState, newState) => {

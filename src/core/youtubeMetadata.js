@@ -41,7 +41,8 @@ function fetchMetadata(input) {
           realTitle: json.title,
           artist: json.artist || json.creator || null,
           uploader: json.uploader || json.channel || null,
-          album: json.album || null
+          album: json.album || null,
+          thumbnail: json.thumbnail || null
         });
       } catch (e) {
         reject(e);
