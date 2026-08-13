@@ -40,13 +40,14 @@ test('updateTrackLyrics changes only the matching track lyrics field', () => {
   );
 
   const script = `
-    const { updateTrackLyrics } = require(${JSON.stringify(musicIndexModule)});
+    const { updateTrackLyrics, updateTrackLyricsOffset } = require(${JSON.stringify(musicIndexModule)});
     const updated = updateTrackLyrics('track-1', {
       source: 'lrclib',
       status: 'found',
       syncedLyrics: [{ time: 12.34, text: 'First line' }]
     });
-    if (!updated) process.exit(1);
+    const offsetUpdated = updateTrackLyricsOffset('track-1', 2);
+    if (!updated || !offsetUpdated) process.exit(1);
   `;
   const child = spawnSync(process.execPath, ['-e', script], {
     cwd: tempDirectory,
@@ -64,7 +65,8 @@ test('updateTrackLyrics changes only the matching track lyrics field', () => {
         source: 'lrclib',
         status: 'found',
         syncedLyrics: [{ time: 12.34, text: 'First line' }]
-      }
+      },
+      lyricsOffset: 2
     });
     assert.deepEqual(updatedIndex.tracks[1], originalIndex.tracks[1]);
     assert.equal(updatedIndex.version, originalIndex.version);
@@ -76,6 +78,7 @@ test('updateTrackLyrics changes only the matching track lyrics field', () => {
         fetchCalled = true;
         throw new Error('LRCLIB must not be called on a persistent cache hit');
       };
+      const rendered = [];
 
       const track = {
         id: 'track-1',
@@ -85,24 +88,31 @@ test('updateTrackLyrics changes only the matching track lyrics field', () => {
       };
       const session = {
         currentTrack: track,
+        guildId: 'guild-1',
         playbackGeneration: 1,
         lyricsGeneration: 0,
         lyricsEnabled: false,
-        player: { state: { resource: { playbackDuration: 13000 } } }
+        player: { state: { resource: { playbackDuration: 13000 } } },
+        playerMessage: {
+          id: 'message-1',
+          channelId: 'channel-1',
+          async edit(payload) {
+            const description = payload.embeds[0].toJSON().description;
+            if (description.includes('First line')) {
+              rendered.push(description);
+              disableLyrics(session);
+            }
+            return this;
+          }
+        }
       };
 
       (async () => {
-        const sent = [];
-        enableLyrics(session, {
-          async send(message) {
-            sent.push(message);
-            disableLyrics(session);
-          }
-        });
+        enableLyrics(session, null);
         const task = session.lyricsTask;
         await task;
         if (fetchCalled) process.exit(2);
-        if (sent[0] !== '♪ First line') process.exit(3);
+        if (!rendered[0]?.includes('▶ **First line**')) process.exit(3);
       })().catch(() => process.exit(4));
     `;
     const cacheReadChild = spawnSync(process.execPath, ['-e', cacheReadScript], {

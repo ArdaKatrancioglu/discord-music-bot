@@ -1,6 +1,7 @@
 // playService.js
 
 const { performance } = require('perf_hooks');
+const { MessageFlags } = require('discord.js');
 const { sanitizeTitle } = require('../utils/titleUtils');
 const { getTrackFromCache, addTrackToCache } = require('../core/musicIndex');
 const { ensureSession } = require('../core/sessionManager');
@@ -12,7 +13,16 @@ const { downloadTrack } = require('./downloadService');
 const { isSpotifyPlaylistUrl, handleSpotifyPlaylist } = require('./spotifyPlaylistService');
 
 async function handlePlayRequest(client, message, query) {
-  await message.reply(`🎵 Request: ${query}`);
+  const queryIsUrl = /^(https?:\/\/|www\.)/i.test(query);
+  const requester = {
+    id: message.author.id,
+    name: message.member?.displayName || message.author.globalName || message.author.username
+  };
+  await message.reply(
+    queryIsUrl
+      ? { content: `🎵 Request: <${query}>`, flags: MessageFlags.SuppressEmbeds }
+      : `🎵 Request: ${query}`
+  );
 
   if (isSpotifyPlaylistUrl(query)) {
     return handleSpotifyPlaylist(client, message, query);
@@ -66,7 +76,7 @@ async function handlePlayRequest(client, message, query) {
   session.autoplayMessage = message;
 
   const t0 = performance.now();
-  const input = /^(https?:\/\/|www\.)/i.test(query) ? query : `ytsearch1:${query}`;
+  const input = queryIsUrl ? query : `ytsearch1:${query}`;
 
   let meta;
   try {
@@ -91,9 +101,12 @@ async function handlePlayRequest(client, message, query) {
     }
     const track = {
       ...cached,
+      displayTitle: meta.realTitle || cached.displayTitle || cached.title,
       artist: meta.artist || cached.artist || null,
       uploader: meta.uploader || cached.uploader || null,
-      album: meta.album || cached.album || null
+      album: meta.album || cached.album || null,
+      thumbnail: meta.thumbnail || cached.thumbnail || null,
+      requester
     };
     const result = queueTrackIntoSession(session, targetGuildId, track);
     if (!result.startedImmediately) {
@@ -104,8 +117,12 @@ async function handlePlayRequest(client, message, query) {
     );
   }
 
-  const link = url ? `\n🔗 ${url}` : 'A Problem Occured While Trying To Fetch URL';
-  await message.reply(`⬇️ Downloading **${title}**${link}`);
+  const downloadTitle = meta.realTitle || title;
+  const linkedTitle = url ? `[${downloadTitle}](${url})` : `**${downloadTitle}**`;
+  await message.reply({
+    content: `⬇️ Downloading ${linkedTitle}`,
+    flags: MessageFlags.SuppressEmbeds
+  });
   const dlStart = performance.now();
   const generationAtStart = session.downloadGeneration || 0;
 
@@ -127,7 +144,9 @@ async function handlePlayRequest(client, message, query) {
       titleSan,
       filePath: result.filePath,
       url,
-      duration: meta.duration || null
+      duration: meta.duration || null,
+      displayTitle: meta.realTitle || title,
+      thumbnail: meta.thumbnail || null
     };
     addTrackToCache(libraryTrack);
 
@@ -135,7 +154,8 @@ async function handlePlayRequest(client, message, query) {
       ...libraryTrack,
       artist: meta.artist || null,
       uploader: meta.uploader || null,
-      album: meta.album || null
+      album: meta.album || null,
+      requester
     };
 
     const queueResult = queueTrackIntoSession(session, targetGuildId, track);
