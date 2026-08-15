@@ -61,7 +61,7 @@ test('player payload uses one compact embed with linked title, lyrics, artwork a
   assert.doesNotMatch(embed.description, /-{3,}|—{3,}/);
   assert.match(embed.description, /video-id\)\n\n♪ Previous/);
   assert.doesNotMatch(embed.description, /\nAlbum\n/);
-  assert.equal(embed.footer.text, 'Up Next: Next Artist — Next Song');
+  assert.match(embed.description, /\*Up Next: Next Artist — Next Song\*$/);
   assert.equal(embed.thumbnail.url, 'https://i.ytimg.com/vi/video-id/hqdefault.jpg');
   assert.equal(payload.components.length, 2);
   assert.deepEqual(

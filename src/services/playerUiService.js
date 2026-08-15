@@ -126,6 +126,7 @@ function buildPlayerPayload(session, { stopped = false } = {}) {
 
     const lyricsText = buildLyricsText(session);
     if (lyricsText) description.push(lyricsText);
+    description.push(`*Up Next: ${escapeMarkdown(formatTrackName(upNext))}*`);
 
     const position = getPlaybackPosition(session);
     const progress = buildProgressBar(position, track.duration);
@@ -143,7 +144,6 @@ function buildPlayerPayload(session, { stopped = false } = {}) {
     if (statusParts.length) {
       embed.addFields({ name: '\u200b', value: statusParts.join('  •  ') });
     }
-    embed.setFooter({ text: `Up Next: ${formatTrackName(upNext)}` });
     const artworkUrl = getArtworkUrl(track);
     if (artworkUrl) embed.setThumbnail(artworkUrl);
   }
@@ -369,6 +369,28 @@ async function userCanControl(interaction, session, guildId) {
   return member?.voice?.channelId === voiceChannelId;
 }
 
+async function restoreCacheSessionFromInteraction(interaction, guildId) {
+  const guild = interaction.client.guilds.cache.get(guildId);
+  if (!guild) return null;
+  const member =
+    guild.members.cache.get(interaction.user.id) ||
+    (await guild.members.fetch(interaction.user.id).catch(() => null));
+  const voiceChannelId = member?.voice?.channelId;
+  if (!voiceChannelId) return null;
+
+  const { ensureSession } = require('../core/sessionManager');
+  const session = ensureSession(guildId, voiceChannelId, guild.voiceAdapterCreator);
+  session.lastChannel = interaction.channel;
+  session.autoplayClient = interaction.client;
+  if (!session.playerMessage) {
+    session.playerMessage = interaction.message;
+    session.playerMessageId = interaction.message.id;
+    session.playerChannelId = interaction.message.channelId;
+    session.playerUiSignature = null;
+  }
+  return session;
+}
+
 async function rejectInteraction(interaction, content) {
   const payload = { content, flags: MessageFlags.Ephemeral };
   if (interaction.deferred || interaction.replied) return interaction.followUp(payload);
@@ -383,9 +405,17 @@ async function handlePlayerInteraction(interaction) {
   const { sessions } = require('../core/sessionManager');
   const idParts = interaction.customId.slice(PLAYER_CUSTOM_ID_PREFIX.length).split(':');
   const [guildId, action] = idParts;
-  const session = guildId ? sessions.get(guildId) : null;
+  let session = guildId ? sessions.get(guildId) : null;
+  if (!session && action === 'cache') {
+    session = await restoreCacheSessionFromInteraction(interaction, guildId);
+  }
   if (!session) {
-    await rejectInteraction(interaction, 'This player session is no longer active.');
+    await rejectInteraction(
+      interaction,
+      action === 'cache'
+        ? 'Join a voice channel before starting cache playback.'
+        : 'This player session is no longer active.'
+    );
     return true;
   }
   if (!(await userCanControl(interaction, session, guildId))) {

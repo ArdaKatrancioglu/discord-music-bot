@@ -14,6 +14,7 @@ const {
 const { startLyricsWorker, stopLyricsWorker } = require('../services/lyricsService');
 
 const sessions = new Map();
+const retainedPlayerUis = new Map();
 const userDefaultVC = new Map();
 const IDLE_TIMEOUT_MS = 2 * 60 * 1000;
 
@@ -24,6 +25,21 @@ function clearIdleDisconnectTimer(session) {
   }
 }
 
+function retainPlayerUiState(guildId, session) {
+  if (!guildId || !session?.playerMessage) return false;
+  retainedPlayerUis.set(guildId, {
+    playerMessage: session.playerMessage,
+    playerMessageId: session.playerMessageId || session.playerMessage.id || null,
+    playerChannelId: session.playerChannelId || session.playerMessage.channelId || null,
+    playerUiSignature: session.playerUiSignature || null
+  });
+  return true;
+}
+
+function getRetainedPlayerUiState(guildId) {
+  return retainedPlayerUis.get(guildId) || null;
+}
+
 function scheduleIdleDisconnect(guildId, session) {
   clearIdleDisconnectTimer(session);
 
@@ -32,6 +48,8 @@ function scheduleIdleDisconnect(guildId, session) {
     if (!activeSession || activeSession !== session) return;
     if (activeSession.currentTrack || activeSession.queue.length > 0) return;
     if (activeSession.autoplay) return;
+    activeSession.disconnecting = true;
+    retainPlayerUiState(guildId, activeSession);
 
     try {
       await activeSession.lastChannel?.send("🛑 Since ya'll doing nothin' for 2 minutes I'm out.");
@@ -39,12 +57,13 @@ function scheduleIdleDisconnect(guildId, session) {
 
     clearAutoplayTimer(activeSession);
     clearIdleDisconnectTimer(activeSession);
+    retainPlayerUiState(guildId, activeSession);
 
     try {
       activeSession.connection?.destroy();
     } catch {}
 
-    sessions.delete(guildId);
+    if (sessions.get(guildId) === activeSession) sessions.delete(guildId);
   }, IDLE_TIMEOUT_MS);
 }
 
@@ -63,13 +82,12 @@ async function disconnectIfChannelEmpty(guildId, guild) {
 
   clearAutoplayTimer(session);
   clearIdleDisconnectTimer(session);
+  session.disconnecting = true;
+  retainPlayerUiState(guildId, session);
   session.lyricsEnabled = false;
-  stopLyricsWorker(session);
-  require('../services/playerUiService').stopPlayerUiUpdater(session);
-
-  try {
-    session.player.stop();
-  } catch {}
+  require('../services/sessionControlService').stopSession(session);
+  await session.playerUiUpdateQueue?.catch(() => {});
+  retainPlayerUiState(guildId, session);
 
   try {
     await session.lastChannel?.send('👋 Ses kanalında kimse kalmadığı için kanaldan çıktım.');
@@ -79,7 +97,7 @@ async function disconnectIfChannelEmpty(guildId, guild) {
     session.connection?.destroy();
   } catch {}
 
-  sessions.delete(guildId);
+  if (sessions.get(guildId) === session) sessions.delete(guildId);
   return true;
 }
 
@@ -101,6 +119,7 @@ function createSession(guildId, channelId, adapterCreator) {
   const player = createAudioPlayer();
   connection.subscribe(player);
 
+  const retainedPlayerUi = getRetainedPlayerUiState(guildId);
   const session = {
     guildId,
     connection,
@@ -132,6 +151,7 @@ function createSession(guildId, channelId, adapterCreator) {
     pausedDurationMs: 0,
     playbackGeneration: 0,
     idleDisconnectTimer: null,
+    disconnecting: false,
 
     lyricsEnabled: true,
     lyricsChannel: null,
@@ -144,10 +164,10 @@ function createSession(guildId, channelId, adapterCreator) {
     lyricsTask: null,
     lyricsInteraction: null,
 
-    playerMessage: null,
-    playerMessageId: null,
-    playerChannelId: null,
-    playerUiSignature: null,
+    playerMessage: retainedPlayerUi?.playerMessage || null,
+    playerMessageId: retainedPlayerUi?.playerMessageId || null,
+    playerChannelId: retainedPlayerUi?.playerChannelId || null,
+    playerUiSignature: retainedPlayerUi?.playerUiSignature || null,
     playerUiUpdateQueue: null,
     playerUiTimer: null,
 
@@ -164,7 +184,7 @@ function createSession(guildId, channelId, adapterCreator) {
 function ensureSession(guildId, channelId, adapterCreator) {
   let session = sessions.get(guildId);
 
-  if (!session) {
+  if (!session || session.disconnecting) {
     return createSession(guildId, channelId, adapterCreator);
   }
 
@@ -191,7 +211,7 @@ function ensureSession(guildId, channelId, adapterCreator) {
 
 async function playNext(guildId) {
   const session = sessions.get(guildId);
-  if (!session) return;
+  if (!session || session.disconnecting) return;
 
   const channel = session.lastChannel;
   clearIdleDisconnectTimer(session);
@@ -291,5 +311,7 @@ module.exports = {
   playNext,
   destroyAllConnections,
   clearIdleDisconnectTimer,
-  disconnectIfChannelEmpty
+  disconnectIfChannelEmpty,
+  retainPlayerUiState,
+  getRetainedPlayerUiState
 };
