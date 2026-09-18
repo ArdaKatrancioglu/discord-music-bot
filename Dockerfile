@@ -14,7 +14,7 @@ RUN apt-get update && apt-get install -y \
 
 RUN python3 -m venv /opt/yt-dlp \
   && /opt/yt-dlp/bin/pip install --upgrade pip \
-  && /opt/yt-dlp/bin/pip install --upgrade yt-dlp bgutil-ytdlp-pot-provider \
+  && /opt/yt-dlp/bin/pip install --upgrade "yt-dlp[default]" bgutil-ytdlp-pot-provider \
   && ln -s /opt/yt-dlp/bin/yt-dlp /usr/local/bin/yt-dlp
 
 COPY package*.json ./
