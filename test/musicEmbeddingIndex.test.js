@@ -9,7 +9,10 @@ const {
   MusicEmbeddingIndex,
   normalizeVector
 } = require('../src/core/musicEmbeddingIndex');
-const { findHighConfidenceTextMatch } = require('../src/services/cacheSearchService');
+const {
+  findHighConfidenceTextMatch,
+  selectSemanticCacheMatch
+} = require('../src/services/cacheSearchService');
 
 function fakeExtractorFactory(callLog) {
   const vectors = {
@@ -49,6 +52,7 @@ test('backfill is persistent, batched, and restart-safe', async () => {
   const firstCalls = [];
   const first = new MusicEmbeddingIndex({
     storePath,
+    model: 'test-model',
     batchSize: 2,
     threshold: 0.8,
     createExtractor: fakeExtractorFactory(firstCalls)
@@ -74,6 +78,7 @@ test('backfill is persistent, batched, and restart-safe', async () => {
     const restartCalls = [];
     const restarted = new MusicEmbeddingIndex({
       storePath,
+      model: 'test-model',
       batchSize: 1,
       createExtractor: fakeExtractorFactory(restartCalls)
     });
@@ -93,4 +98,40 @@ test('high-confidence keyword lookup ignores common video-title noise', () => {
 
   assert.equal(findHighConfidenceTextMatch('Arctic Monkeys do I wanna know', tracks), expected);
   assert.equal(findHighConfidenceTextMatch('unrelated words', tracks), null);
+});
+
+test('semantic cache confidence rejects a high-scoring unrelated short title', () => {
+  const decision = selectSemanticCacheMatch(
+    'dar ankara',
+    [
+      { score: 0.818, track: { title: 'Bak' } },
+      { score: 0.77, track: { title: 'Another Song' } }
+    ],
+    { overlapThreshold: 0.84, strictThreshold: 0.9, strictMinimumMargin: 0.05 }
+  );
+
+  assert.equal(decision.match, null);
+  assert.equal(decision.hasTokenOverlap, false);
+  assert.equal(decision.reason, 'below threshold');
+});
+
+test('semantic cache confidence keeps strong overlap and unambiguous cross-language matches', () => {
+  const overlapping = selectSemanticCacheMatch('house rising sun', [
+    { score: 0.87, track: { title: 'House of the Rising Sun' } },
+    { score: 0.81, track: { title: 'Unrelated' } }
+  ]);
+  assert.equal(overlapping.match.title, 'House of the Rising Sun');
+
+  const crossLanguage = selectSemanticCacheMatch('my enemy', [
+    { score: 0.92, track: { title: 'Düşmanım' } },
+    { score: 0.7, track: { title: 'Başka Şarkı' } }
+  ]);
+  assert.equal(crossLanguage.match.title, 'Düşmanım');
+
+  const ambiguous = selectSemanticCacheMatch('my enemy', [
+    { score: 0.92, track: { title: 'Düşmanım' } },
+    { score: 0.89, track: { title: 'Rakibim' } }
+  ]);
+  assert.equal(ambiguous.match, null);
+  assert.equal(ambiguous.reason, 'ambiguous nearest neighbors');
 });

@@ -4,8 +4,8 @@ const path = require('path');
 const readline = require('readline');
 const { performance } = require('perf_hooks');
 
-const DEFAULT_MODEL = 'Xenova/paraphrase-multilingual-MiniLM-L12-v2';
-const DEFAULT_THRESHOLD = 0.72;
+const DEFAULT_MODEL = 'Xenova/multilingual-e5-small';
+const DEFAULT_THRESHOLD = 0.84;
 const DEFAULT_BATCH_SIZE = 8;
 
 function normalizeVector(values) {
@@ -95,6 +95,7 @@ class MusicEmbeddingIndex {
   } = {}) {
     this.storePath = storePath || path.join(process.cwd(), 'downloadedMusic', 'embeddings.jsonl');
     this.model = model;
+    this.inputPrefix = model.includes('multilingual-e5') ? 'query: ' : '';
     this.threshold = threshold;
     this.batchSize = batchSize;
     this.createExtractor = createExtractor || this.#createDefaultExtractor.bind(this);
@@ -162,7 +163,8 @@ class MusicEmbeddingIndex {
     if (!this.extractorPromise) this.extractorPromise = this.createExtractor();
     const run = async () => {
       const extractor = await this.extractorPromise;
-      const output = await extractor(texts, { pooling: 'mean', normalize: true });
+      const modelInputs = texts.map((text) => `${this.inputPrefix}${text}`);
+      const output = await extractor(modelInputs, { pooling: 'mean', normalize: true });
       const dimensions = output.dims.at(-1);
       if (!dimensions || output.data.length !== texts.length * dimensions) {
         throw new Error(`Unexpected embedding shape: ${output.dims.join('x')}`);

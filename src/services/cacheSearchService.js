@@ -18,9 +18,18 @@ function parsePositiveNumber(value, fallback) {
 }
 
 const embeddingIndex = new MusicEmbeddingIndex({
-  threshold: parsePositiveNumber(process.env.CACHE_SEMANTIC_THRESHOLD, 0.72),
+  threshold: parsePositiveNumber(process.env.CACHE_SEMANTIC_THRESHOLD, 0.84),
   batchSize: Math.floor(parsePositiveNumber(process.env.CACHE_EMBEDDING_BATCH_SIZE, 8))
 });
+const semanticThreshold = parsePositiveNumber(process.env.CACHE_SEMANTIC_THRESHOLD, 0.84);
+const noOverlapThreshold = parsePositiveNumber(
+  process.env.CACHE_SEMANTIC_NO_OVERLAP_THRESHOLD,
+  0.9
+);
+const noOverlapMinimumMargin = parsePositiveNumber(
+  process.env.CACHE_SEMANTIC_NO_OVERLAP_MIN_MARGIN,
+  0.05
+);
 
 function normalizedWords(value) {
   return String(value || '')
@@ -60,15 +69,60 @@ function findHighConfidenceTextMatch(query, tracks) {
   return candidates[0]?.track || null;
 }
 
+function selectSemanticCacheMatch(
+  query,
+  candidates,
+  {
+    overlapThreshold = semanticThreshold,
+    strictThreshold = noOverlapThreshold,
+    strictMinimumMargin = noOverlapMinimumMargin
+  } = {}
+) {
+  const best = candidates[0];
+  if (!best) return { match: null, reason: 'no candidates' };
+
+  const queryWords = new Set(comparableWords(query));
+  const titleWords = comparableWords(
+    best.track?.displayTitle || best.track?.title || best.track?.titleSan
+  );
+  const hasTokenOverlap = titleWords.some((word) => queryWords.has(word));
+  const secondScore = candidates[1]?.score ?? -1;
+  const margin = best.score - secondScore;
+  const requiredThreshold = hasTokenOverlap ? overlapThreshold : strictThreshold;
+  const hasEnoughMargin = hasTokenOverlap || margin >= strictMinimumMargin;
+  const accepted = best.score >= requiredThreshold && hasEnoughMargin;
+
+  return {
+    match: accepted ? best.track : null,
+    bestScore: best.score,
+    margin,
+    hasTokenOverlap,
+    requiredThreshold,
+    reason: accepted
+      ? 'accepted'
+      : best.score < requiredThreshold
+        ? 'below threshold'
+        : 'ambiguous nearest neighbors'
+  };
+}
+
 async function searchCachedMusic(query, tracks) {
   const textMatch = findHighConfidenceTextMatch(query, tracks);
   if (textMatch) return { track: textMatch, source: 'keyword', score: 1 };
 
-  const semantic = await embeddingIndex.search(query, tracks);
+  const semantic = await embeddingIndex.search(query, tracks, { threshold: -1 });
+  const decision = selectSemanticCacheMatch(query, semantic.candidates);
+  if (!decision.match && semantic.candidates.length) {
+    console.log(
+      `[Semantic Search] Rejected cache candidate: ${decision.reason}, ` +
+        `score=${decision.bestScore.toFixed(4)}, required=${decision.requiredThreshold.toFixed(2)}, ` +
+        `margin=${decision.margin.toFixed(4)}, tokenOverlap=${decision.hasTokenOverlap}`
+    );
+  }
   return {
-    track: semantic.match,
-    source: semantic.match ? 'semantic' : null,
-    score: semantic.bestScore
+    track: decision.match,
+    source: decision.match ? 'semantic' : null,
+    score: decision.bestScore
   };
 }
 
@@ -90,5 +144,6 @@ module.exports = {
   findHighConfidenceTextMatch,
   scheduleTrackEmbedding,
   searchCachedMusic,
+  selectSemanticCacheMatch,
   startEmbeddingBackfill
 };

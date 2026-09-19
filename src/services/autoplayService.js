@@ -15,11 +15,11 @@ const numericSetting = (value, fallback) => {
 };
 const AUTOPLAY_SEMANTIC_REJECT_THRESHOLD = numericSetting(
   process.env.AUTOPLAY_SEMANTIC_REJECT_THRESHOLD,
-  0.8
+  0.93
 );
 const AUTOPLAY_SEMANTIC_PENALTY_START = numericSetting(
   process.env.AUTOPLAY_SEMANTIC_PENALTY_START,
-  0.4
+  0.83
 );
 const AUTOPLAY_MAX_DIVERSITY_PENALTY = 45;
 

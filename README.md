@@ -149,13 +149,16 @@ project/
 
 - Uses parallel downloaders (**`aria2c`** if available).
 - Utilizes **in-memory caching** for fast responses.
-- Uses a quantized multilingual MiniLM model loaded once per process. Existing tracks are
+- Uses the quantized multilingual E5-small retrieval model, loaded once per process. Existing tracks are
   backfilled automatically at startup; `npm run backfill:embeddings` can run the migration manually.
-- `CACHE_SEMANTIC_THRESHOLD` (default `0.72`) and `CACHE_EMBEDDING_BATCH_SIZE` (default `8`)
+- `CACHE_SEMANTIC_THRESHOLD` (default `0.84`) and `CACHE_EMBEDDING_BATCH_SIZE` (default `8`)
   can be adjusted through the environment.
+- Semantic cache candidates without any shared title/query token use the stricter
+  `CACHE_SEMANTIC_NO_OVERLAP_THRESHOLD` (default `0.90`) and must beat the second candidate by
+  `CACHE_SEMANTIC_NO_OVERLAP_MIN_MARGIN` (default `0.05`).
 - Autoplay never restores exact matches from its five-track recent history. It also rejects title
-  similarity at or above `AUTOPLAY_SEMANTIC_REJECT_THRESHOLD` (default `0.80`) and gradually
-  penalizes similarity starting at `AUTOPLAY_SEMANTIC_PENALTY_START` (default `0.40`).
+  similarity at or above `AUTOPLAY_SEMANTIC_REJECT_THRESHOLD` (default `0.93`) and gradually
+  penalizes similarity starting at `AUTOPLAY_SEMANTIC_PENALTY_START` (default `0.83`).
 
 ## Legal Notice
 
