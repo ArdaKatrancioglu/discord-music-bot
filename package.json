@@ -6,6 +6,7 @@
   "scripts": {
     "prestart": "node scripts/start-bgutil.js",
     "start": "node index.js",
+    "backfill:embeddings": "node scripts/backfill-embeddings.js",
     "format": "prettier --write .",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
@@ -18,6 +19,7 @@
   "dependencies": {
     "@discordjs/opus": "^0.10.0",
     "@discordjs/voice": "^0.19.0",
+    "@huggingface/transformers": "^3.8.1",
     "@noble/ciphers": "^2.0.1",
     "@snazzah/davey": "^0.1.7",
     "@stablelib/xchacha20poly1305": "^2.0.1",

@@ -2,10 +2,26 @@ const { execFile } = require('child_process');
 const https = require('https');
 const { sessions } = require('../core/sessionManager');
 const { ytDlpPath } = require('../core/binaries');
+const { dotProduct } = require('../core/musicEmbeddingIndex');
+const { embedMusicTitles } = require('./cacheSearchService');
 const { resolveGuildIdForBoundAwareCommand } = require('./messageContextService');
 
 const LASTFM_API_KEY = process.env.LASTFM_API_KEY || null;
 const MAX_YT_RESULTS = 20;
+const AUTOPLAY_RECENT_TRACK_LIMIT = 5;
+const numericSetting = (value, fallback) => {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed >= -1 && parsed <= 1 ? parsed : fallback;
+};
+const AUTOPLAY_SEMANTIC_REJECT_THRESHOLD = numericSetting(
+  process.env.AUTOPLAY_SEMANTIC_REJECT_THRESHOLD,
+  0.8
+);
+const AUTOPLAY_SEMANTIC_PENALTY_START = numericSetting(
+  process.env.AUTOPLAY_SEMANTIC_PENALTY_START,
+  0.4
+);
+const AUTOPLAY_MAX_DIVERSITY_PENALTY = 45;
 
 function execYtDlp(args) {
   return new Promise((resolve, reject) => {
@@ -489,10 +505,6 @@ function dedupeCandidates(candidates) {
   return out;
 }
 
-function normalizeCandidateUrl(candidate) {
-  return candidate?.track?.webpage_url || candidate?.track?.url || null;
-}
-
 function normalizeTrackIdentity(track) {
   return {
     url: track?.url || track?.webpage_url || null,
@@ -511,7 +523,11 @@ function isInRecentHistory(candidate, historyTracks = []) {
   for (const track of historyTracks) {
     const historyIdentity = normalizeTrackIdentity(track);
 
-    if (candidateIdentity.url && historyIdentity.url && candidateIdentity.url === historyIdentity.url) {
+    if (
+      candidateIdentity.url &&
+      historyIdentity.url &&
+      candidateIdentity.url === historyIdentity.url
+    ) {
       return true;
     }
 
@@ -535,6 +551,78 @@ function filterRecentHistoryCandidates(candidates, historyTracks = []) {
   if (!historyTracks.length) return candidates;
 
   return candidates.filter((candidate) => !isInRecentHistory(candidate, historyTracks));
+}
+
+function autoplayTitle(track) {
+  return String(track?.displayTitle || track?.title || '').trim();
+}
+
+async function applyEmbeddingDiversity(
+  candidates,
+  historyTracks = [],
+  {
+    embedTitles = embedMusicTitles,
+    rejectThreshold = AUTOPLAY_SEMANTIC_REJECT_THRESHOLD,
+    penaltyStart = AUTOPLAY_SEMANTIC_PENALTY_START
+  } = {}
+) {
+  const recentTracks = historyTracks.slice(0, AUTOPLAY_RECENT_TRACK_LIMIT);
+  if (!candidates.length || !recentTracks.length) return candidates;
+
+  const candidateTitles = candidates.map((candidate) => autoplayTitle(candidate.track));
+  const historyTitles = recentTracks.map(autoplayTitle).filter(Boolean);
+  if (!historyTitles.length) return candidates;
+
+  const vectors = await embedTitles([...candidateTitles, ...historyTitles]);
+  const candidateVectors = vectors.slice(0, candidateTitles.length);
+  const historyVectors = vectors.slice(candidateTitles.length);
+  const scored = [];
+
+  candidates.forEach((candidate, index) => {
+    const candidateVector = candidateVectors[index];
+    if (!candidateVector?.length) {
+      scored.push({
+        ...candidate,
+        baseScore: candidate.score,
+        diversityPenalty: 0,
+        maxRecentSimilarity: null
+      });
+      return;
+    }
+    let maxRecentSimilarity = -1;
+    for (const historyVector of historyVectors) {
+      if (!historyVector?.length) continue;
+      maxRecentSimilarity = Math.max(
+        maxRecentSimilarity,
+        dotProduct(candidateVector, historyVector)
+      );
+    }
+
+    if (maxRecentSimilarity >= rejectThreshold) return;
+    const penaltyRange = Math.max(rejectThreshold - penaltyStart, 0.01);
+    const penaltyRatio = Math.max(
+      0,
+      Math.min(1, (maxRecentSimilarity - penaltyStart) / penaltyRange)
+    );
+    const diversityPenalty = Math.round(penaltyRatio * AUTOPLAY_MAX_DIVERSITY_PENALTY);
+    scored.push({
+      ...candidate,
+      score: candidate.score - diversityPenalty,
+      baseScore: candidate.score,
+      diversityPenalty,
+      maxRecentSimilarity
+    });
+  });
+
+  const keptSimilarities = scored
+    .map((candidate) => candidate.maxRecentSimilarity)
+    .filter((similarity) => similarity != null);
+  const bestSimilarity = keptSimilarities.length ? Math.max(...keptSimilarities) : null;
+  console.log(
+    `[Autoplay Embeddings] recent=${historyTitles.length}, candidates=${candidates.length}, ` +
+      `rejected=${candidates.length - scored.length}, highest-kept-similarity=${bestSimilarity == null ? 'n/a' : bestSimilarity.toFixed(4)}`
+  );
+  return scored;
 }
 
 function selectCandidateRoulette(candidates) {
@@ -603,25 +691,43 @@ async function findAutoplayCandidate(currentUrl, historyUrls = [], options = {})
   const confidence = metadataConfidence(metadata, parsed);
 
   let candidates = [];
+  let usedLastFm = false;
+  let usedFallback = false;
 
   if (LASTFM_API_KEY && parsed.confidence >= 65) {
     candidates = await getCandidatesFromLastFm(parsed, history);
+    usedLastFm = candidates.length > 0;
   }
 
   if (candidates.length === 0) {
     candidates = await getCandidatesFromFallback(metadata, parsed, history);
+    usedFallback = true;
   }
 
-  candidates = dedupeCandidates(candidates);
+  candidates = filterRecentHistoryCandidates(dedupeCandidates(candidates), historyTracks);
+
+  // Never restore exact recent-history matches. If Last.fm only produced items
+  // from the recent loop, widen the search instead.
+  if (candidates.length === 0 && usedLastFm) {
+    const fallbackCandidates = await getCandidatesFromFallback(metadata, parsed, history);
+    candidates = filterRecentHistoryCandidates(dedupeCandidates(fallbackCandidates), historyTracks);
+    usedFallback = true;
+  }
+
+  try {
+    candidates = await applyEmbeddingDiversity(candidates, historyTracks);
+    if (candidates.length === 0 && usedLastFm && !usedFallback) {
+      const fallbackCandidates = filterRecentHistoryCandidates(
+        dedupeCandidates(await getCandidatesFromFallback(metadata, parsed, history)),
+        historyTracks
+      );
+      candidates = await applyEmbeddingDiversity(fallbackCandidates, historyTracks);
+    }
+  } catch (error) {
+    console.warn('[Autoplay Embeddings] Diversity scoring unavailable:', error.message);
+  }
+
   candidates.sort((a, b) => b.score - a.score);
-
-  const unfilteredCandidates = candidates;
-
-  candidates = filterRecentHistoryCandidates(candidates, historyTracks);
-
-  if (candidates.length === 0 && unfilteredCandidates.length > 0) {
-    candidates = unfilteredCandidates;
-  }
 
   const selected = selectAutoplayCandidate(candidates, selectionMode);
 
@@ -661,7 +767,9 @@ async function handleAutoplayCommand(client, message) {
 
   let result;
   try {
-    result = await findAutoplayCandidate(session.currentTrack.url, historyUrls);
+    result = await findAutoplayCandidate(session.currentTrack.url, historyUrls, {
+      historyTracks: session.recentHistory || []
+    });
   } catch (e) {
     console.error('[Autoplay Error]', e.stderr || e);
     return message.reply('❌ Autoplay lookup failed.');
@@ -684,6 +792,8 @@ async function handleAutoplayCommand(client, message) {
 }
 
 module.exports = {
+  applyEmbeddingDiversity,
+  filterRecentHistoryCandidates,
   handleAutoplayCommand,
   findAutoplayCandidate
 };

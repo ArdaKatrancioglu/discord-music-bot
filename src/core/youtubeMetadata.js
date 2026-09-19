@@ -1,7 +1,41 @@
 const { spawn } = require('child_process');
 const { ytDlpPath } = require('./binaries');
 
-function fetchMetadata(input) {
+function extractYouTubeVideoId(value) {
+  if (typeof value !== 'string' || !value.trim()) return null;
+  try {
+    const input = /^https?:\/\//i.test(value) ? value : `https://${value}`;
+    const url = new URL(input);
+    const hostname = url.hostname.toLowerCase().replace(/^www\./, '');
+    let candidate = null;
+
+    if (hostname === 'youtu.be') {
+      candidate = url.pathname.split('/').filter(Boolean)[0];
+    } else if (hostname === 'youtube.com' || hostname.endsWith('.youtube.com')) {
+      candidate = url.searchParams.get('v');
+      if (!candidate) {
+        const parts = url.pathname.split('/').filter(Boolean);
+        if (['shorts', 'embed', 'live'].includes(parts[0])) candidate = parts[1];
+      }
+    }
+
+    return /^[A-Za-z0-9_-]{11}$/.test(candidate || '') ? candidate : null;
+  } catch {
+    return null;
+  }
+}
+
+function selectMetadataResult(output, excludeVideoIds = new Set()) {
+  const lines = output.trim().split('\n').filter(Boolean);
+  const candidates = lines.map((line) => JSON.parse(line));
+  const selected = candidates.find((candidate) => !excludeVideoIds.has(candidate.id));
+  if (!selected) {
+    throw new Error('YouTube returned no alternative results for this repeated query.');
+  }
+  return selected;
+}
+
+function fetchMetadata(input, { excludeVideoIds = new Set() } = {}) {
   return new Promise((resolve, reject) => {
     const args = ['--no-playlist', '--dump-json', '--encoding', 'utf-8', input];
 
@@ -27,8 +61,7 @@ function fetchMetadata(input) {
       }
 
       try {
-        const lines = out.trim().split('\n').filter(Boolean);
-        const json = JSON.parse(lines[0]);
+        const json = selectMetadataResult(out, excludeVideoIds);
 
         resolve({
           id: json.title,
@@ -52,5 +85,7 @@ function fetchMetadata(input) {
 }
 
 module.exports = {
-  fetchMetadata
+  extractYouTubeVideoId,
+  fetchMetadata,
+  selectMetadataResult
 };

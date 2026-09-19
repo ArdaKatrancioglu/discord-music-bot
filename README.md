@@ -17,6 +17,7 @@ It allows users to play, queue, pause, skip, and cache YouTube audio directly in
   - Downloads and stores tracks as `.mp3` in the `downloadedMusic/` folder
   - Replays cached songs instantly without re-downloading
   - Filenames automatically include both the **video ID** and **song title**
+  - Searches cached titles with multilingual semantic embeddings before falling back to YouTube
 
 - **Infinite cache playback**
   - `!cache` starts endless random playback of your cached library
@@ -91,6 +92,7 @@ The project directory structure should be:
 project/
 ├── downloadedMusic/                  # Auto-created: downloaded MP3s + persistent index
 │   ├── index.json                    # Cached track metadata (id, title, filename, etc.)
+│   ├── embeddings.jsonl              # Restart-safe normalized title embeddings
 │   └── <id>_<sanitized>.mp3          # Downloaded audio files
 │
 ├── src/
@@ -147,6 +149,13 @@ project/
 
 - Uses parallel downloaders (**`aria2c`** if available).
 - Utilizes **in-memory caching** for fast responses.
+- Uses a quantized multilingual MiniLM model loaded once per process. Existing tracks are
+  backfilled automatically at startup; `npm run backfill:embeddings` can run the migration manually.
+- `CACHE_SEMANTIC_THRESHOLD` (default `0.72`) and `CACHE_EMBEDDING_BATCH_SIZE` (default `8`)
+  can be adjusted through the environment.
+- Autoplay never restores exact matches from its five-track recent history. It also rejects title
+  similarity at or above `AUTOPLAY_SEMANTIC_REJECT_THRESHOLD` (default `0.80`) and gradually
+  penalizes similarity starting at `AUTOPLAY_SEMANTIC_PENALTY_START` (default `0.40`).
 
 ## Legal Notice
 

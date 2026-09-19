@@ -61,6 +61,8 @@ function scheduleAutoplayCheck(client, message, guildId, session) {
             `**${next.title}**\n` +
             `Source: ${next.source}\n` +
             `Score: ${next.score}\n` +
+            `Recent similarity: ${next.maxRecentSimilarity?.toFixed(3) ?? 'n/a'} ` +
+            `(diversity penalty: ${next.diversityPenalty})\n` +
             `🔗 ${next.url}`
         );
       }
@@ -73,7 +75,9 @@ function scheduleAutoplayCheck(client, message, guildId, session) {
       if (session.lastChannel?.send) {
         try {
           await session.lastChannel.send(`❌ Autoplay scheduler failed: ${err.message}`);
-        } catch {}
+        } catch {
+          // The original notification failure has already been logged above.
+        }
       }
     }
   }, delayMs);

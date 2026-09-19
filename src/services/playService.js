@@ -3,14 +3,22 @@
 const { performance } = require('perf_hooks');
 const { MessageFlags } = require('discord.js');
 const { sanitizeTitle } = require('../utils/titleUtils');
-const { getTrackFromCache, addTrackToCache } = require('../core/musicIndex');
+const {
+  getTrackFromCache,
+  addTrackToCache,
+  listAllCachedTracksUnique
+} = require('../core/musicIndex');
 const { ensureSession } = require('../core/sessionManager');
-const { fetchMetadata } = require('../core/youtubeMetadata');
+const { extractYouTubeVideoId, fetchMetadata } = require('../core/youtubeMetadata');
 const { detectIfPlaylist, handlePlaylist } = require('./playlistService');
 const { getBoundVoiceTarget, setBoundVoiceTarget } = require('./messageContextService');
 const { queueTrackIntoSession } = require('./cacheService');
 const { downloadTrack } = require('./downloadService');
 const { isSpotifyPlaylistUrl, handleSpotifyPlaylist } = require('./spotifyPlaylistService');
+const { scheduleTrackEmbedding, searchCachedMusic } = require('./cacheSearchService');
+const { RepeatedQueryTracker } = require('./repeatedQueryService');
+
+const repeatedQueries = new RepeatedQueryTracker();
 
 async function handlePlayRequest(client, message, query) {
   const queryIsUrl = /^(https?:\/\/|www\.)/i.test(query);
@@ -26,18 +34,6 @@ async function handlePlayRequest(client, message, query) {
 
   if (isSpotifyPlaylistUrl(query)) {
     return handleSpotifyPlaylist(client, message, query);
-  }
-
-  if (/youtube\.com|youtu\.be/.test(query)) {
-    try {
-      const isPlaylist = await detectIfPlaylist(query);
-      if (isPlaylist) {
-        await message.reply('📃 Playlist algılandı. Playlist moduna geçiyorum...');
-        return handlePlaylist(client, message, query);
-      }
-    } catch (e) {
-      console.error('Playlist kontrol hatası:', e);
-    }
   }
 
   let targetGuildId, targetChannelId;
@@ -75,12 +71,84 @@ async function handlePlayRequest(client, message, query) {
   session.autoplayClient = client;
   session.autoplayMessage = message;
 
+  const repeatState = queryIsUrl
+    ? { shouldTryYouTubeAlternative: false, excludedVideoIds: new Set() }
+    : repeatedQueries.begin(message.author.id, query);
+
+  async function useCachedTrack(cached, { meta = null, matchSource = 'exact' } = {}) {
+    if (!cached.duration && meta?.duration) {
+      cached.duration = meta.duration;
+      addTrackToCache(cached);
+    }
+    const track = {
+      ...cached,
+      displayTitle: meta?.realTitle || cached.displayTitle || cached.title,
+      artist: meta?.artist || cached.artist || null,
+      uploader: meta?.uploader || cached.uploader || null,
+      album: meta?.album || cached.album || null,
+      thumbnail: meta?.thumbnail || cached.thumbnail || null,
+      requester
+    };
+    const result = queueTrackIntoSession(session, targetGuildId, track);
+    if (!result.startedImmediately) {
+      await message.reply(`🔄 Queued from cache: **${track.title}**`);
+    }
+    if (!queryIsUrl) repeatedQueries.markServed(message.author.id, query, track);
+    return matchSource;
+  }
+
+  // YouTube URLs carry the stable cache key. Avoid yt-dlp entirely on an ID hit.
+  const urlVideoId = queryIsUrl ? extractYouTubeVideoId(query) : null;
+  if (urlVideoId) {
+    const cachedById = getTrackFromCache({ id: urlVideoId });
+    if (cachedById) {
+      await useCachedTrack(cachedById, { matchSource: 'youtube-id' });
+      return message.reply('⏱ cache 0ms (YouTube ID match)');
+    }
+  }
+
+  if (/youtube\.com|youtu\.be/.test(query)) {
+    try {
+      const isPlaylist = await detectIfPlaylist(query);
+      if (isPlaylist) {
+        await message.reply('📃 Playlist algılandı. Playlist moduna geçiyorum...');
+        return handlePlaylist(client, message, query);
+      }
+    } catch (e) {
+      console.error('Playlist kontrol hatası:', e);
+    }
+  }
+
+  // For text queries, retain cheap high-confidence keyword matching and only
+  // embed the query when that does not find a cached track.
+  if (!queryIsUrl && !repeatState.shouldTryYouTubeAlternative) {
+    try {
+      const cacheSearch = await searchCachedMusic(query, listAllCachedTracksUnique());
+      if (cacheSearch.track) {
+        await useCachedTrack(cacheSearch.track, { matchSource: cacheSearch.source });
+        const score = cacheSearch.score == null ? '' : `, score ${cacheSearch.score.toFixed(3)}`;
+        return message.reply(`⏱ cache hit (${cacheSearch.source}${score})`);
+      }
+    } catch (error) {
+      // A missing/unavailable local model should not break normal YouTube search.
+      console.warn('[Semantic Search] Falling back to YouTube:', error.message);
+    }
+  }
+
+  if (repeatState.shouldTryYouTubeAlternative) {
+    await message.reply('🔄 Same query again — trying a different YouTube result this time.');
+  }
+
   const t0 = performance.now();
-  const input = queryIsUrl ? query : `ytsearch1:${query}`;
+  const input = queryIsUrl
+    ? query
+    : `${repeatState.shouldTryYouTubeAlternative ? 'ytsearch10' : 'ytsearch1'}:${query}`;
 
   let meta;
   try {
-    meta = await fetchMetadata(input);
+    meta = await fetchMetadata(input, {
+      excludeVideoIds: repeatState.excludedVideoIds
+    });
   } catch (e) {
     return message.reply('⚠️ Metadata error: ' + e.message);
   }
@@ -95,23 +163,7 @@ async function handlePlayRequest(client, message, query) {
 
   const cached = getTrackFromCache({ id, titleSan });
   if (cached) {
-    if (!cached.duration && meta.duration) {
-      cached.duration = meta.duration;
-      addTrackToCache(cached);
-    }
-    const track = {
-      ...cached,
-      displayTitle: meta.realTitle || cached.displayTitle || cached.title,
-      artist: meta.artist || cached.artist || null,
-      uploader: meta.uploader || cached.uploader || null,
-      album: meta.album || cached.album || null,
-      thumbnail: meta.thumbnail || cached.thumbnail || null,
-      requester
-    };
-    const result = queueTrackIntoSession(session, targetGuildId, track);
-    if (!result.startedImmediately) {
-      await message.reply(`🔄 Queued from cache: **${track.title}**`);
-    }
+    await useCachedTrack(cached, { meta });
     return message.reply(
       `⏱ meta ${(t1 - t0).toFixed(0)}ms, prep ${(t2 - t1).toFixed(0)}ms, cache 0ms`
     );
@@ -149,6 +201,11 @@ async function handlePlayRequest(client, message, query) {
       thumbnail: meta.thumbnail || null
     };
     addTrackToCache(libraryTrack);
+    try {
+      await scheduleTrackEmbedding(libraryTrack);
+    } catch (error) {
+      console.warn('[Embeddings] New track will be retried by backfill:', error.message);
+    }
 
     const track = {
       ...libraryTrack,
@@ -159,6 +216,7 @@ async function handlePlayRequest(client, message, query) {
     };
 
     const queueResult = queueTrackIntoSession(session, targetGuildId, track);
+    if (!queryIsUrl) repeatedQueries.markServed(message.author.id, query, track);
 
     if (!queueResult.startedImmediately) {
       await message.reply(`🔄 Queued: **${track.title}**`);

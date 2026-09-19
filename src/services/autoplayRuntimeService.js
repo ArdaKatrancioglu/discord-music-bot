@@ -1,5 +1,3 @@
-const { findAutoplayCandidate } = require('./autoplayService');
-
 function getAutoplayReferenceTrack(session) {
   if (session.queue?.length > 0) {
     return session.queue[session.queue.length - 1];
@@ -56,6 +54,9 @@ async function findNextAutoplayTrack(session) {
   session.autoplayInProgress = true;
 
   try {
+    // Load lazily to avoid sessionManager -> scheduler -> runtime -> autoplayService
+    // resolving autoplayService while sessionManager is still partially initialized.
+    const { findAutoplayCandidate } = require('./autoplayService');
     const recentHistory = session.recentHistory || [];
 
     const historyUrls = [
@@ -93,6 +94,8 @@ async function findNextAutoplayTrack(session) {
       title: selected.track.title,
       source: selected.source,
       score: selected.score,
+      maxRecentSimilarity: selected.maxRecentSimilarity,
+      diversityPenalty: selected.diversityPenalty || 0,
       referenceTrack,
       selectionWeight: selected.selectionWeight
     };
