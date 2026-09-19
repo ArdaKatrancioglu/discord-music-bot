@@ -4,22 +4,102 @@ const { spawn } = require('child_process');
 const { resolveBinary, ffmpegPath, ytDlpPath } = require('../core/binaries');
 const { downloadsDir } = require('../core/musicIndex');
 
-const AUDIO_ONLY_FORMAT =
-  'bestaudio[ext=webm]/bestaudio[ext=m4a]/bestaudio';
+const AUDIO_ONLY_FORMAT = 'bestaudio[ext=webm]/bestaudio[ext=m4a]/bestaudio';
+const ANY_AUDIO_FORMAT = 'bestaudio*/best*[acodec!=none]/best';
+const LOW_BANDWIDTH_AUDIO_FORMAT = 'worstaudio*/worst*[acodec!=none]/worst';
 
-const VIDEO_FALLBACK_FORMAT =
-  'best[height<=480][ext=mp4]/best[height<=480]/best[ext=mp4]/best';
+const DOWNLOAD_STRATEGIES = {
+  preferredAudio: {
+    name: 'preferred audio-only format',
+    format: AUDIO_ONLY_FORMAT
+  },
+  anyAudio: {
+    name: 'any available format containing audio',
+    format: ANY_AUDIO_FORMAT
+  },
+  ytDlpDefault: {
+    name: 'yt-dlp automatic format selection',
+    format: null
+  },
+  alternateClient: {
+    name: 'alternate YouTube clients with any audio',
+    format: ANY_AUDIO_FORMAT,
+    alternateClients: true
+  },
+  alternateLowBandwidth: {
+    name: 'alternate YouTube clients with low-bandwidth audio',
+    format: LOW_BANDWIDTH_AUDIO_FORMAT,
+    alternateClients: true
+  }
+};
 
 function buildExtractorArg() {
   const baseUrl = process.env.BGUTIL_BASE_URL || 'http://bgutil-pot:4416';
   return `youtubepot-bgutilhttp:base_url=${baseUrl}`;
 }
 
+function buildExtractorArgs(alternateClients = false) {
+  const args = [buildExtractorArg()];
+  if (alternateClients) {
+    args.push('youtube:player_client=default,mweb,web_safari,tv_downgraded,web_embedded');
+  }
+  return args;
+}
+
+function classifyDownloadError(error) {
+  const text = `${error?.stderrData || ''}\n${error?.stdoutData || ''}`.toLowerCase();
+  if (/requested format is not available|no video formats found/.test(text)) {
+    return 'format-unavailable';
+  }
+  if (/http error 403|403 forbidden|forbidden/.test(text)) return 'access-denied';
+  if (/http error 429|too many requests|rate.?limit/.test(text)) return 'rate-limited';
+  if (/private video|members-only|age.restricted|sign in to confirm/.test(text)) {
+    return 'restricted';
+  }
+  if (/no space left on device|disk quota exceeded/.test(text)) return 'storage';
+  if (
+    /timed out|temporary failure|connection reset|network is unreachable|failed to resolve/.test(
+      text
+    )
+  ) {
+    return 'network';
+  }
+  return 'unknown';
+}
+
+function recoveryStrategiesFor(error) {
+  switch (classifyDownloadError(error)) {
+  case 'format-unavailable':
+    return [
+      DOWNLOAD_STRATEGIES.anyAudio,
+      DOWNLOAD_STRATEGIES.ytDlpDefault,
+      DOWNLOAD_STRATEGIES.alternateClient,
+      DOWNLOAD_STRATEGIES.alternateLowBandwidth
+    ];
+  case 'access-denied':
+    return [
+      DOWNLOAD_STRATEGIES.alternateClient,
+      DOWNLOAD_STRATEGIES.alternateLowBandwidth,
+      DOWNLOAD_STRATEGIES.ytDlpDefault
+    ];
+  case 'network':
+  case 'unknown':
+    return [
+      DOWNLOAD_STRATEGIES.anyAudio,
+      DOWNLOAD_STRATEGIES.alternateClient,
+      DOWNLOAD_STRATEGIES.ytDlpDefault
+    ];
+  default:
+    return [];
+  }
+}
+
 function runYtDlpDownload({
   url,
   filenameTemplate,
   format,
-  useAria2c = false
+  useAria2c = false,
+  alternateClients = false
 }) {
   return new Promise((resolve, reject) => {
     const cookiesPath = path.join(process.cwd(), 'cookies.txt');
@@ -31,16 +111,23 @@ function runYtDlpDownload({
       path.dirname(ffmpegPath) || ffmpegPath,
       '--no-playlist',
       '--force-ipv4',
+      '--check-formats',
+      '--retries',
+      '3',
+      '--fragment-retries',
+      '3',
+      '--retry-sleep',
+      '1',
       '--js-runtimes',
-      'node',
-      '--extractor-args',
-      buildExtractorArg(),
-      '-f',
-      format,
-      '-o',
-      path.join(downloadsDir, filenameTemplate),
-      url
+      'node'
     ];
+
+    for (const extractorArg of buildExtractorArgs(alternateClients)) {
+      dlArgs.push('--extractor-args', extractorArg);
+    }
+
+    if (format) dlArgs.push('-f', format);
+    dlArgs.push('-o', path.join(downloadsDir, filenameTemplate), url);
 
     // Keep cookies disabled by default while using POT provider.
     // Enable only if you specifically need age/private/login-restricted videos.
@@ -49,14 +136,7 @@ function runYtDlpDownload({
     }
 
     if (useAria2c && resolveBinary('aria2c')) {
-      dlArgs.splice(
-        1,
-        0,
-        '--downloader',
-        'aria2c',
-        '--downloader-args',
-        'aria2c:-x 8 -k 1M'
-      );
+      dlArgs.splice(1, 0, '--downloader', 'aria2c', '--downloader-args', 'aria2c:-x 8 -k 1M');
     }
 
     const dl = spawn(ytDlpPath, dlArgs, {
@@ -103,39 +183,95 @@ function runYtDlpDownload({
 
 function findDownloadedFile({ id, titleSan }) {
   const files = fs.readdirSync(downloadsDir);
-  return files.find((file) => file.startsWith(`${id}_${titleSan}.`));
+  return files.find(
+    (file) =>
+      file.startsWith(`${id}_${titleSan}.`) &&
+      /\.(mp3|m4a|webm|mp4|opus|ogg|wav)$/i.test(file) &&
+      fs.statSync(path.join(downloadsDir, file)).size > 0
+  );
 }
 
-async function downloadTrack({ id, titleSan, url, filenameTemplate }) {
-  let firstError = null;
+function summarizeAttempt(strategy, error) {
+  const finalLine = String(error.stderrData || '')
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .at(-1);
+  return {
+    strategy: strategy.name,
+    classification: classifyDownloadError(error),
+    code: error.code,
+    message: finalLine || `yt-dlp exited with code ${error.code}`
+  };
+}
 
-  try {
-    await runYtDlpDownload({
-      url,
-      filenameTemplate,
-      format: AUDIO_ONLY_FORMAT,
-      useAria2c: false
-    });
-  } catch (error) {
-    firstError = error;
+async function downloadTrack({ id, titleSan, url, filenameTemplate, onRetry }) {
+  const attempts = [];
+  const queuedStrategies = [DOWNLOAD_STRATEGIES.preferredAudio];
+  const attemptedNames = new Set();
+  let lastError = null;
 
-    await runYtDlpDownload({
-      url,
-      filenameTemplate,
-      format: VIDEO_FALLBACK_FORMAT,
-      useAria2c: process.env.USE_ARIA2C_FOR_VIDEO_FALLBACK === 'true'
-    });
+  while (queuedStrategies.length) {
+    const strategy = queuedStrategies.shift();
+    if (attemptedNames.has(strategy.name)) continue;
+    attemptedNames.add(strategy.name);
+
+    try {
+      await runYtDlpDownload({
+        url,
+        filenameTemplate,
+        format: strategy.format,
+        alternateClients: strategy.alternateClients,
+        useAria2c:
+          strategy !== DOWNLOAD_STRATEGIES.preferredAudio &&
+          process.env.USE_ARIA2C_FOR_VIDEO_FALLBACK === 'true'
+      });
+      lastError = null;
+      break;
+    } catch (error) {
+      lastError = error;
+      const attempt = summarizeAttempt(strategy, error);
+      attempts.push(attempt);
+      console.warn(
+        `[Download Recovery] ${attempt.strategy} failed (${attempt.classification}, code ${attempt.code}).`
+      );
+
+      const recoveryStrategies = recoveryStrategiesFor(error);
+      if (!recoveryStrategies.length) {
+        queuedStrategies.length = 0;
+      } else {
+        queuedStrategies.push(...recoveryStrategies);
+      }
+      const nextStrategy = queuedStrategies.find((item) => !attemptedNames.has(item.name));
+      if (nextStrategy && onRetry) {
+        try {
+          await onRetry({
+            failedAttempt: attempt,
+            nextStrategy: nextStrategy.name,
+            attemptNumber: attempts.length + 1
+          });
+        } catch (callbackError) {
+          console.warn('[Download Recovery] Could not send retry status:', callbackError.message);
+        }
+      }
+    }
   }
 
   const file = findDownloadedFile({ id, titleSan });
 
   if (!file) {
+    const diagnostic = attempts
+      .map(
+        (attempt, index) =>
+          `${index + 1}. ${attempt.strategy}: ${attempt.classification} (${attempt.message})`
+      )
+      .join('\n');
     throw {
-      code: 0,
-      stderrData:
-        'Downloaded file not found.' +
-        (firstError?.stderrData ? `\nFirst audio-only error:\n${firstError.stderrData}` : ''),
-      stdoutData: firstError?.stdoutData || ''
+      code: lastError?.code ?? 0,
+      classification: lastError ? classifyDownloadError(lastError) : 'missing-output',
+      stderrData: diagnostic || 'Downloaded file not found after yt-dlp reported success.',
+      stdoutData: lastError?.stdoutData || '',
+      attempts
     };
   }
 
@@ -143,11 +279,14 @@ async function downloadTrack({ id, titleSan, url, filenameTemplate }) {
 
   return {
     filePath: filepath,
-    usedFallback: firstError !== null,
-    firstError
+    usedFallback: attempts.length > 0,
+    attempts,
+    strategy: [...attemptedNames].at(-1)
   };
 }
 
 module.exports = {
+  classifyDownloadError,
+  recoveryStrategiesFor,
   downloadTrack
 };

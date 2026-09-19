@@ -183,7 +183,13 @@ async function handlePlayRequest(client, message, query) {
       id,
       titleSan,
       url,
-      filenameTemplate
+      filenameTemplate,
+      onRetry: async ({ failedAttempt, nextStrategy, attemptNumber }) => {
+        await message.reply(
+          `⚠️ Download attempt failed (${failedAttempt.classification}). ` +
+            `Trying recovery #${attemptNumber}: **${nextStrategy}**…`
+        );
+      }
     });
 
     if ((session.downloadGeneration || 0) !== generationAtStart) {
@@ -239,7 +245,10 @@ async function handlePlayRequest(client, message, query) {
     console.error((e.stdoutData || '').trim());
     console.error('------------------');
 
-    await message.reply(`❌ **Download failed.** (code ${e.code})`);
+    const classification = e.classification ? `, ${e.classification}` : '';
+    await message.reply(
+      `❌ **Download failed after recovery attempts.** (code ${e.code}${classification})`
+    );
     if (e.stderrData) {
       await message.reply('```' + e.stderrData.slice(0, 1800) + '```');
     }
