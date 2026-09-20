@@ -34,7 +34,9 @@ const DOWNLOAD_STRATEGIES = {
 };
 
 function buildExtractorArg() {
-  const baseUrl = process.env.BGUTIL_BASE_URL || 'http://bgutil-pot:4416';
+  // Local runs reach the published Docker port through loopback. Docker Compose
+  // overrides this with http://bgutil-pot:4416 for container-to-container traffic.
+  const baseUrl = process.env.BGUTIL_BASE_URL || 'http://127.0.0.1:4416';
   return `youtubepot-bgutilhttp:base_url=${baseUrl}`;
 }
 
@@ -65,6 +67,38 @@ function classifyDownloadError(error) {
     return 'network';
   }
   return 'unknown';
+}
+
+function diagnoseDownloadError(error) {
+  const output = `${error?.stderrData || ''}\n${error?.stdoutData || ''}`;
+  const details = [];
+
+  if (/unable to download video data:.*403|http error 403|403 forbidden/i.test(output)) {
+    details.push('YouTube metadata was retrieved, but its media CDN rejected the audio-data request.');
+
+    const format = output.match(/Downloading \d+ format\(s\):\s*([^\r\n]+)/i)?.[1];
+    if (format) details.push(`Rejected format: ${format.trim()}.`);
+
+    const clients = [...output.matchAll(/Downloading ([^\r\n]+?) player API JSON/gi)].map(
+      (match) => match[1].trim()
+    );
+    if (clients.length) details.push(`Player client(s): ${[...new Set(clients)].join(', ')}.`);
+
+    if (/android vr player API JSON/i.test(output)) {
+      details.push(
+        'Likely cause: the Android VR client produced a media URL without a valid PO token, or YouTube rejected the token/IP/client combination.'
+      );
+    } else {
+      details.push(
+        'Likely causes: missing/invalid PO token, token and IP/client mismatch, an expired signed media URL, or YouTube blocking the current IP.'
+      );
+    }
+    details.push(
+      'YouTube returns only “Forbidden” here, so the exact server-side rule cannot be known from the HTTP response.'
+    );
+  }
+
+  return details;
 }
 
 function recoveryStrategiesFor(error) {
@@ -107,6 +141,7 @@ function runYtDlpDownload({
 
     const dlArgs = [
       '--newline',
+      '--verbose',
       '--ffmpeg-location',
       path.dirname(ffmpegPath) || ffmpegPath,
       '--no-playlist',
@@ -192,16 +227,25 @@ function findDownloadedFile({ id, titleSan }) {
 }
 
 function summarizeAttempt(strategy, error) {
-  const finalLine = String(error.stderrData || '')
+  const stderrLines = String(error.stderrData || '')
     .split(/\r?\n/)
     .map((line) => line.trim())
-    .filter(Boolean)
-    .at(-1);
+    .filter(Boolean);
+  const stdoutLines = String(error.stdoutData || '')
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const errorLine = [...stderrLines]
+    .reverse()
+    .find((line) => /(?:^|\b)(?:error|fatal)(?:\b|:)/i.test(line));
+  const finalLine = errorLine || stderrLines.at(-1) || stdoutLines.at(-1);
+
   return {
     strategy: strategy.name,
     classification: classifyDownloadError(error),
     code: error.code,
-    message: finalLine || `yt-dlp exited with code ${error.code}`
+    message: finalLine || `yt-dlp exited with code ${error.code}`,
+    details: diagnoseDownloadError(error)
   };
 }
 
@@ -233,8 +277,17 @@ async function downloadTrack({ id, titleSan, url, filenameTemplate, onRetry }) {
       const attempt = summarizeAttempt(strategy, error);
       attempts.push(attempt);
       console.warn(
-        `[Download Recovery] ${attempt.strategy} failed (${attempt.classification}, code ${attempt.code}).`
+        `[Download Recovery] ${attempt.strategy} failed (${attempt.classification}, code ${attempt.code}): ${attempt.message}`
       );
+      if (attempt.details.length) {
+        console.warn('[Download Recovery] Diagnosis:\n- ' + attempt.details.join('\n- '));
+      }
+      if (error.stderrData?.trim()) {
+        console.warn('[Download Recovery] yt-dlp stderr:\n' + error.stderrData.trim());
+      }
+      if (error.stdoutData?.trim()) {
+        console.warn('[Download Recovery] yt-dlp stdout:\n' + error.stdoutData.trim());
+      }
 
       const recoveryStrategies = recoveryStrategiesFor(error);
       if (!recoveryStrategies.length) {
@@ -287,6 +340,8 @@ async function downloadTrack({ id, titleSan, url, filenameTemplate, onRetry }) {
 
 module.exports = {
   classifyDownloadError,
+  diagnoseDownloadError,
   recoveryStrategiesFor,
+  summarizeAttempt,
   downloadTrack
 };

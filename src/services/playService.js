@@ -185,8 +185,15 @@ async function handlePlayRequest(client, message, query) {
       url,
       filenameTemplate,
       onRetry: async ({ failedAttempt, nextStrategy, attemptNumber }) => {
+        const errorDetail = failedAttempt.message.slice(0, 1200).replaceAll('`', 'ˋ');
+        const diagnosis = failedAttempt.details.length
+          ? `\n**Diagnosis**\n${failedAttempt.details.map((detail) => `• ${detail}`).join('\n')}`
+          : '';
         await message.reply(
-          `⚠️ Download attempt failed (${failedAttempt.classification}). ` +
+          `⚠️ Download attempt failed (code ${failedAttempt.code}, ${failedAttempt.classification}).\n` +
+            `\`\`\`${errorDetail}\`\`\`` +
+            diagnosis.slice(0, 1200) +
+            '\n' +
             `Trying recovery #${attemptNumber}: **${nextStrategy}**…`
         );
       }

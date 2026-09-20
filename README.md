@@ -76,13 +76,27 @@ npm install discord.js libsodium-wrappers dotenv
 
 _(Optional but recommended: install **aria2c** for faster downloads.)_
 
-### 4\. Start the Bot
+### 4\. Start the Bot Locally
 
-Run the main bot file:
+Docker Desktop must be running. The `prestart` script starts the PO-token provider
+container and publishes it at `127.0.0.1:4416`; the bot then starts on the host:
 
 ```bash
-node index.js
+npm start
 ```
+
+Do not set `BGUTIL_BASE_URL` for a normal local run. Its local default is
+`http://127.0.0.1:4416`.
+
+### 5\. Run Everything with Docker Compose
+
+```bash
+docker compose up --build -d
+```
+
+Inside Compose, `docker-compose.yml` explicitly sets
+`BGUTIL_BASE_URL=http://bgutil-pot:4416`, using Docker's internal service name.
+This is intentionally different from the local address.
 
 ## Folder Structure
 
