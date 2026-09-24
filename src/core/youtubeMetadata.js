@@ -1,3 +1,5 @@
+const fs = require('fs');
+const path = require('path');
 const { spawn } = require('child_process');
 const { ytDlpPath } = require('./binaries');
 
@@ -37,7 +39,22 @@ function selectMetadataResult(output, excludeVideoIds = new Set()) {
 
 function fetchMetadata(input, { excludeVideoIds = new Set() } = {}) {
   return new Promise((resolve, reject) => {
-    const args = ['--no-playlist', '--dump-json', '--encoding', 'utf-8', input];
+    const cookiesPath = path.join(process.cwd(), 'cookies.txt');
+    const hasCookies = fs.existsSync(cookiesPath) && fs.statSync(cookiesPath).size > 0;
+    const args = [
+      '--no-playlist',
+      '--dump-json',
+      '--encoding',
+      'utf-8',
+      '--js-runtimes',
+      'node'
+    ];
+
+    if (process.env.USE_COOKIES === 'true' && hasCookies) {
+      args.push('--cookies', cookiesPath);
+    }
+
+    args.push(input);
 
     const proc = spawn(ytDlpPath, args, {
       env: { ...process.env, PYTHONIOENCODING: 'utf-8' }
