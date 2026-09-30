@@ -4,7 +4,8 @@
  * Measures the actual yt-dlp invocations used by this bot. It never adds a
  * benchmark download to the music index and removes media unless --keep is set.
  *
- * Example:
+ * Examples:
+ *   node scripts/benchmark-youtube-pipeline.js 'Daft Punk One More Time'
  *   node scripts/benchmark-youtube-pipeline.js 'https://www.youtube.com/watch?v=...'
  */
 
@@ -27,7 +28,7 @@ function usage(exitCode = 0) {
 YouTube pipeline benchmark
 
 Usage:
-  node scripts/benchmark-youtube-pipeline.js <YouTube URL or search query> [options]
+  node scripts/benchmark-youtube-pipeline.js <play request> [options]
 
 Options:
   --cookies=both|with|without  Cookie scenarios to measure (default: both)
@@ -36,9 +37,10 @@ Options:
   --keep                       Keep downloaded benchmark media under the run directory
   --help                       Show this help
 
+For a text request, metadata is fetched using ytsearch1:<request>, exactly as
+the first p <song name> request in the bot. A URL is passed through directly.
 The script writes report.md and report.json under benchmark-results/. Cookie
-contents are never included in either report. For comparable downloads, pass a
-direct YouTube URL rather than a search query.
+contents are never included in either report.
 `;
   console.log(text.trim());
   process.exit(exitCode);
@@ -70,6 +72,12 @@ function parseArgs(argv) {
 
 function elapsedMs(start) {
   return Math.round(performance.now() - start);
+}
+
+function metadataInputForPlayRequest(input) {
+  // Keep this in lockstep with handlePlayRequest: initial text requests use
+  // ytsearch1, while URLs are passed straight through to yt-dlp.
+  return /^(https?:\/\/|www\.)/i.test(input) ? input : `ytsearch1:${input}`;
 }
 
 function timestamp() {
@@ -158,7 +166,8 @@ function makeMarkdown(report) {
     '# YouTube pipeline benchmark',
     '',
     `- Generated: ${report.generatedAt}`,
-    `- Input: \`${report.input}\``,
+    `- Play request: \`${report.input}\``,
+    `- Actual metadata input: \`${report.metadataInput}\``,
     `- Host: ${report.environment.hostname} (${report.environment.platform})`,
     `- Node: ${report.environment.node}; yt-dlp: ${report.environment.ytDlpVersion}; ffmpeg: ${report.environment.ffmpegVersion}`,
     `- Cookies file: ${report.cookies.available ? `available (${report.cookies.bytes} bytes)` : 'not available'}`,
@@ -200,6 +209,7 @@ function makeMarkdown(report) {
 
 async function main() {
   const options = parseArgs(process.argv.slice(2));
+  const metadataInput = metadataInputForPlayRequest(options.input);
   const cookiesPath = path.join(process.cwd(), 'cookies.txt');
   const cookiesAvailable = fs.existsSync(cookiesPath) && fs.statSync(cookiesPath).size > 0;
   const cookieModes = options.cookies === 'both' ? [false, true] : [options.cookies === 'with'];
@@ -209,6 +219,7 @@ async function main() {
   const report = {
     generatedAt: new Date().toISOString(),
     input: options.input,
+    metadataInput,
     options,
     cookies: {
       available: cookiesAvailable,
@@ -243,7 +254,7 @@ async function main() {
         continue;
       }
       console.log(`[metadata] ${cookieMode}, run ${run}/${options.runs}`);
-      const result = await measureMetadata(options.input, useCookies);
+      const result = await measureMetadata(metadataInput, useCookies);
       report.metadata.push({ cookieMode, run, result });
       console.log(`  ${result.ok ? 'OK' : 'FAILED'} in ${result.elapsedMs}ms`);
     }

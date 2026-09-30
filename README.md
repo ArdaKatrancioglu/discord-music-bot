@@ -106,15 +106,16 @@ mode separately, and writes a Markdown and JSON report below
 `benchmark-results/`:
 
 ```bash
-npm run benchmark:youtube -- 'https://www.youtube.com/watch?v=VIDEO_ID'
+npm run benchmark:youtube -- 'artist - song title' --runs=3
 ```
 
-By default it tests metadata and all download modes once both without cookies
-and with `cookies.txt`. The cookie scenario is clearly marked as skipped if
-that file is absent; no cookie contents are ever written to the report.
-Downloads are deleted after timing, and never enter the music cache. Use a
-direct URL for an apples-to-apples comparison, `--runs=3` for repeated timing,
-`--no-download` for only metadata, or `--keep` to retain the test media.
+For a text request, it uses `ytsearch1:` exactly like the first `!play`/`p`
+request; a YouTube URL is passed through directly. By default it tests
+metadata and all download modes once both without cookies and with
+`cookies.txt`. The cookie scenario is clearly marked as skipped if that file
+is absent; no cookie contents are ever written to the report. Downloads are
+deleted after timing, and never enter the music cache. Use `--no-download` for
+only metadata or `--keep` to retain the test media.
 
 ## Folder Structure
 
