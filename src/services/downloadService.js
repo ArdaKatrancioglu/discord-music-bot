@@ -133,7 +133,9 @@ function runYtDlpDownload({
   filenameTemplate,
   format,
   useAria2c = false,
-  alternateClients = false
+  alternateClients = false,
+  outputDir = downloadsDir,
+  useCookies
 }) {
   return new Promise((resolve, reject) => {
     const cookiesPath = path.join(process.cwd(), 'cookies.txt');
@@ -162,11 +164,12 @@ function runYtDlpDownload({
     }
 
     if (format) dlArgs.push('-f', format);
-    dlArgs.push('-o', path.join(downloadsDir, filenameTemplate), url);
+    dlArgs.push('-o', path.join(outputDir, filenameTemplate), url);
 
     // Keep cookies disabled by default while using POT provider.
     // Enable only if you specifically need age/private/login-restricted videos.
-    if (process.env.USE_COOKIES === 'true' && hasCookies) {
+    const shouldUseCookies = useCookies ?? process.env.USE_COOKIES === 'true';
+    if (shouldUseCookies && hasCookies) {
       dlArgs.push('--cookies', cookiesPath);
     }
 
@@ -339,9 +342,13 @@ async function downloadTrack({ id, titleSan, url, filenameTemplate, onRetry }) {
 }
 
 module.exports = {
+  DOWNLOAD_STRATEGIES,
+  buildExtractorArg,
+  buildExtractorArgs,
   classifyDownloadError,
   diagnoseDownloadError,
   recoveryStrategiesFor,
   summarizeAttempt,
+  runYtDlpDownload,
   downloadTrack
 };

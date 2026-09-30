@@ -37,20 +37,14 @@ function selectMetadataResult(output, excludeVideoIds = new Set()) {
   return selected;
 }
 
-function fetchMetadata(input, { excludeVideoIds = new Set() } = {}) {
+function fetchMetadata(input, { excludeVideoIds = new Set(), useCookies } = {}) {
   return new Promise((resolve, reject) => {
     const cookiesPath = path.join(process.cwd(), 'cookies.txt');
     const hasCookies = fs.existsSync(cookiesPath) && fs.statSync(cookiesPath).size > 0;
-    const args = [
-      '--no-playlist',
-      '--dump-json',
-      '--encoding',
-      'utf-8',
-      '--js-runtimes',
-      'node'
-    ];
+    const args = ['--no-playlist', '--dump-json', '--encoding', 'utf-8', '--js-runtimes', 'node'];
 
-    if (process.env.USE_COOKIES === 'true' && hasCookies) {
+    const shouldUseCookies = useCookies ?? process.env.USE_COOKIES === 'true';
+    if (shouldUseCookies && hasCookies) {
       args.push('--cookies', cookiesPath);
     }
 
