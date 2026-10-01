@@ -3,6 +3,7 @@
 const { clearAutoplayTimer } = require('./autoplaySchedulerService');
 const { clearIdleDisconnectTimer } = require('../core/sessionManager');
 const { stopLyricsWorker, wakeLyricsWorker } = require('./lyricsService');
+const { recordPlaybackEnd } = require('./analyticsService');
 
 function pauseSession(session) {
   clearIdleDisconnectTimer(session);
@@ -28,10 +29,13 @@ function resumeSession(session) {
         .requestPlayerUpdate(session, { force: true })
         .catch(() => {});
     }
-  } catch {}
+  } catch {
+    // Ignore voice state races while resuming.
+  }
 }
 
 function stopSession(session) {
+  recordPlaybackEnd(session, 'stopped');
   clearAutoplayTimer(session);
   clearIdleDisconnectTimer(session);
   stopLyricsWorker(session);
@@ -56,7 +60,9 @@ function stopSession(session) {
 
   try {
     session.player.stop();
-  } catch {}
+  } catch {
+    // The player may already be stopped.
+  }
 
   session.currentTrack = null;
   session.isPaused = false;
@@ -70,12 +76,15 @@ function skipSession(session) {
   if (!session.currentTrack) return null;
 
   const skippedTitle = session.currentTrack.title;
+  recordPlaybackEnd(session, 'skipped');
   clearIdleDisconnectTimer(session);
   stopLyricsWorker(session);
 
   try {
     session.player.unpause();
-  } catch {}
+  } catch {
+    // Continue the skip even if the player cannot be unpaused first.
+  }
   session.isPaused = false;
   session.pausedAt = null;
   session.pausedDurationMs = 0;

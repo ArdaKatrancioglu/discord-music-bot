@@ -9,7 +9,11 @@ const {
   listAllCachedTracksUnique
 } = require('../core/musicIndex');
 const { ensureSession } = require('../core/sessionManager');
-const { extractYouTubeVideoId, fetchMetadata } = require('../core/youtubeMetadata');
+const {
+  classifyMetadataError,
+  extractYouTubeVideoId,
+  fetchMetadataWithFallback
+} = require('../core/youtubeMetadata');
 const { detectIfPlaylist, handlePlaylist } = require('./playlistService');
 const { getBoundVoiceTarget, setBoundVoiceTarget } = require('./messageContextService');
 const { queueTrackIntoSession } = require('./cacheService');
@@ -17,11 +21,33 @@ const { downloadTrack } = require('./downloadService');
 const { isSpotifyPlaylistUrl, handleSpotifyPlaylist } = require('./spotifyPlaylistService');
 const { scheduleTrackEmbedding, searchCachedMusic } = require('./cacheSearchService');
 const { RepeatedQueryTracker } = require('./repeatedQueryService');
+const {
+  recordCacheHit,
+  recordDownloadAttempt,
+  recordDownloadPipeline,
+  recordMetadataAttempt,
+  recordMetadataPipeline,
+  recordPlayOutcome,
+  recordPlayRequest
+} = require('./analyticsService');
 
 const repeatedQueries = new RepeatedQueryTracker();
 
 async function handlePlayRequest(client, message, query) {
+  const requestStartedAt = performance.now();
   const queryIsUrl = /^(https?:\/\/|www\.)/i.test(query);
+  let playOutcomeRecorded = false;
+  const finishPlayRequest = ({ outcome, source, reason }) => {
+    if (playOutcomeRecorded) return;
+    playOutcomeRecorded = true;
+    recordPlayOutcome({
+      outcome,
+      source,
+      reason,
+      durationMs: performance.now() - requestStartedAt
+    });
+  };
+  recordPlayRequest({ type: queryIsUrl ? 'url' : 'search' });
   const requester = {
     id: message.author.id,
     name: message.member?.displayName || message.author.globalName || message.author.username
@@ -33,6 +59,7 @@ async function handlePlayRequest(client, message, query) {
   );
 
   if (isSpotifyPlaylistUrl(query)) {
+    finishPlayRequest({ outcome: 'delegated', source: 'spotify-playlist' });
     return handleSpotifyPlaylist(client, message, query);
   }
 
@@ -40,8 +67,10 @@ async function handlePlayRequest(client, message, query) {
 
   if (message.guild) {
     const vc = message.member?.voice?.channel;
-    if (!vc)
+    if (!vc) {
+      finishPlayRequest({ outcome: 'failure', reason: 'no-voice-channel' });
       return message.reply('⚠️ Where you at? Nowhere. Join a voice channel first you dumb fuck');
+    }
 
     targetGuildId = vc.guild.id;
     targetChannelId = vc.id;
@@ -53,6 +82,7 @@ async function handlePlayRequest(client, message, query) {
   } else {
     const pref = getBoundVoiceTarget(message.author.id);
     if (!pref) {
+      finishPlayRequest({ outcome: 'failure', reason: 'no-bound-voice-channel' });
       return message.reply(
         '⚠️ No voice channel is connected yet. Join a voice channel on a server and !bind it or run !play there. ' +
           '(Alternative: !use <guildId> <channelId> in DM)'
@@ -64,7 +94,10 @@ async function handlePlayRequest(client, message, query) {
   }
 
   const guild = client.guilds.cache.get(targetGuildId);
-  if (!guild) return message.reply('❌ Server not found (bot must be on that server).');
+  if (!guild) {
+    finishPlayRequest({ outcome: 'failure', reason: 'guild-not-found' });
+    return message.reply('❌ Server not found (bot must be on that server).');
+  }
 
   const session = ensureSession(targetGuildId, targetChannelId, guild.voiceAdapterCreator);
   session.lastChannel = message.channel;
@@ -82,6 +115,7 @@ async function handlePlayRequest(client, message, query) {
     }
     const track = {
       ...cached,
+      source: 'cache',
       displayTitle: meta?.realTitle || cached.displayTitle || cached.title,
       artist: meta?.artist || cached.artist || null,
       uploader: meta?.uploader || cached.uploader || null,
@@ -90,6 +124,8 @@ async function handlePlayRequest(client, message, query) {
       requester
     };
     const result = queueTrackIntoSession(session, targetGuildId, track);
+    recordCacheHit({ source: matchSource });
+    finishPlayRequest({ outcome: 'success', source: 'cache' });
     if (!result.startedImmediately) {
       await message.reply(`🔄 Queued from cache: **${track.title}**`);
     }
@@ -111,6 +147,7 @@ async function handlePlayRequest(client, message, query) {
     try {
       const isPlaylist = await detectIfPlaylist(query);
       if (isPlaylist) {
+        finishPlayRequest({ outcome: 'delegated', source: 'youtube-playlist' });
         await message.reply('📃 Playlist algılandı. Playlist moduna geçiyorum...');
         return handlePlaylist(client, message, query);
       }
@@ -145,11 +182,33 @@ async function handlePlayRequest(client, message, query) {
     : `${repeatState.shouldTryYouTubeAlternative ? 'ytsearch10' : 'ytsearch1'}:${query}`;
 
   let meta;
+  let metadataResult;
   try {
-    meta = await fetchMetadata(input, {
-      excludeVideoIds: repeatState.excludedVideoIds
+    metadataResult = await fetchMetadataWithFallback(input, {
+      excludeVideoIds: repeatState.excludedVideoIds,
+      onAttempt: (attempt) => {
+        recordMetadataAttempt({
+          useCookies: attempt.useCookies,
+          success: attempt.success,
+          durationMs: attempt.durationMs,
+          classification: attempt.classification
+        });
+      }
+    });
+    meta = metadataResult.metadata;
+    recordMetadataPipeline({
+      success: true,
+      durationMs: performance.now() - t0,
+      usedCookieFallback: metadataResult.usedCookieFallback
     });
   } catch (e) {
+    recordMetadataPipeline({
+      success: false,
+      durationMs: performance.now() - t0,
+      usedCookieFallback: Boolean(e.usedCookieFallback),
+      classification: classifyMetadataError(e)
+    });
+    finishPlayRequest({ outcome: 'failure', reason: 'metadata-failed' });
     return message.reply('⚠️ Metadata error: ' + e.message);
   }
   const t1 = performance.now();
@@ -184,7 +243,7 @@ async function handlePlayRequest(client, message, query) {
       titleSan,
       url,
       filenameTemplate,
-      onRetry: async ({ failedAttempt, nextStrategy, attemptNumber }) => {
+      onRetry: async ({ failedAttempt, nextStrategy, nextUseCookies, attemptNumber }) => {
         const errorDetail = failedAttempt.message.slice(0, 1200).replaceAll('`', 'ˋ');
         const diagnosis = failedAttempt.details.length
           ? `\n**Diagnosis**\n${failedAttempt.details.map((detail) => `• ${detail}`).join('\n')}`
@@ -194,12 +253,31 @@ async function handlePlayRequest(client, message, query) {
             `\`\`\`${errorDetail}\`\`\`` +
             diagnosis.slice(0, 1200) +
             '\n' +
-            `Trying recovery #${attemptNumber}: **${nextStrategy}**…`
+            `Trying recovery #${attemptNumber}: **${nextStrategy}** (${nextUseCookies ? 'with cookies' : 'without cookies'})…`
         );
+      },
+      onAttempt: (attempt) => {
+        recordDownloadAttempt({
+          useCookies: attempt.useCookies,
+          strategyKey: attempt.strategyKey,
+          strategyName: attempt.strategy,
+          success: attempt.success,
+          durationMs: attempt.durationMs,
+          bytes: attempt.bytes,
+          classification: attempt.classification
+        });
       }
     });
 
+    recordDownloadPipeline({
+      success: true,
+      durationMs: performance.now() - dlStart,
+      attemptCount: result.attemptHistory.length,
+      usedCookieFallback: result.attemptHistory.some((attempt) => attempt.useCookies)
+    });
+
     if ((session.downloadGeneration || 0) !== generationAtStart) {
+      finishPlayRequest({ outcome: 'cancelled', reason: 'session-stopped-during-download' });
       return;
     }
 
@@ -222,6 +300,7 @@ async function handlePlayRequest(client, message, query) {
 
     const track = {
       ...libraryTrack,
+      source: 'download',
       artist: meta.artist || null,
       uploader: meta.uploader || null,
       album: meta.album || null,
@@ -229,6 +308,7 @@ async function handlePlayRequest(client, message, query) {
     };
 
     const queueResult = queueTrackIntoSession(session, targetGuildId, track);
+    finishPlayRequest({ outcome: 'success', source: 'download' });
     if (!queryIsUrl) repeatedQueries.markServed(message.author.id, query, track);
 
     if (!queueResult.startedImmediately) {
@@ -245,6 +325,14 @@ async function handlePlayRequest(client, message, query) {
         `total ${(t4 - t0).toFixed(0)}ms`
     );
   } catch (e) {
+    recordDownloadPipeline({
+      success: false,
+      durationMs: performance.now() - dlStart,
+      attemptCount: e.attemptHistory?.length || e.attempts?.length || 0,
+      usedCookieFallback: Boolean(e.attemptHistory?.some((attempt) => attempt.useCookies)),
+      classification: e.classification || 'unknown'
+    });
+    finishPlayRequest({ outcome: 'failure', reason: 'download-failed' });
     console.error(`❌ [Download Error] yt-dlp exited with code ${e.code}`);
     console.error('----- STDERR -----');
     console.error((e.stderrData || '').trim());

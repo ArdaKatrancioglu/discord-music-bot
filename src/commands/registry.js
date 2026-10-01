@@ -14,6 +14,7 @@ const loopCommand = require('./actions/loopCommand');
 const loopQueueCommand = require('./actions/loopQueueCommand');
 const autoplayCommand = require('./actions/autoplayCommand');
 const lyricsCommand = require('./actions/lyricsCommand');
+const statsCommand = require('./actions/statsCommand');
 
 module.exports = [
   {
@@ -68,6 +69,10 @@ module.exports = [
       content === '!autoplay' ||
       content.startsWith('!autoplay '),
     handler: autoplayCommand
+  },
+  {
+    matches: (content) => content === '!stats' || content === 'stats',
+    handler: statsCommand
   },
   {
     matches: (content) => content.startsWith('p '),

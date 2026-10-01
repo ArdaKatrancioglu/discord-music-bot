@@ -12,6 +12,10 @@ const {
   scheduleAutoplayCheck
 } = require('../services/autoplaySchedulerService');
 const { startLyricsWorker, stopLyricsWorker } = require('../services/lyricsService');
+const {
+  recordPlaybackEnd,
+  recordPlaybackStart
+} = require('../services/analyticsService');
 
 const sessions = new Map();
 const retainedPlayerUis = new Map();
@@ -52,8 +56,10 @@ function scheduleIdleDisconnect(guildId, session) {
     retainPlayerUiState(guildId, activeSession);
 
     try {
-      await activeSession.lastChannel?.send("🛑 Since ya'll doing nothin' for 2 minutes I'm out.");
-    } catch {}
+      await activeSession.lastChannel?.send('🛑 Idle for 2 minutes, disconnecting.');
+    } catch {
+      // The channel may have disappeared while the idle timer was pending.
+    }
 
     clearAutoplayTimer(activeSession);
     clearIdleDisconnectTimer(activeSession);
@@ -61,7 +67,9 @@ function scheduleIdleDisconnect(guildId, session) {
 
     try {
       activeSession.connection?.destroy();
-    } catch {}
+    } catch {
+      // The voice connection may already be destroyed.
+    }
 
     if (sessions.get(guildId) === activeSession) sessions.delete(guildId);
   }, IDLE_TIMEOUT_MS);
@@ -91,11 +99,15 @@ async function disconnectIfChannelEmpty(guildId, guild) {
 
   try {
     await session.lastChannel?.send('👋 Ses kanalında kimse kalmadığı için kanaldan çıktım.');
-  } catch {}
+  } catch {
+    // Leaving the voice channel must continue even if the status message fails.
+  }
 
   try {
     session.connection?.destroy();
-  } catch {}
+  } catch {
+    // The voice connection may already be destroyed.
+  }
 
   if (sessions.get(guildId) === session) sessions.delete(guildId);
   return true;
@@ -106,7 +118,14 @@ function attachPlayerEvents(guildId) {
   if (!session || session._eventsAttached) return;
 
   session._eventsAttached = true;
-  session.player.on(AudioPlayerStatus.Idle, () => playNext(guildId));
+  session.player.on(AudioPlayerStatus.Idle, () => {
+    recordPlaybackEnd(session, 'completed');
+    playNext(guildId);
+  });
+  session.player.on('error', (error) => {
+    recordPlaybackEnd(session, 'error');
+    console.warn('[Playback] Audio player error:', error.message);
+  });
 }
 
 function createSession(guildId, channelId, adapterCreator) {
@@ -150,6 +169,7 @@ function createSession(guildId, channelId, adapterCreator) {
     pausedAt: null,
     pausedDurationMs: 0,
     playbackGeneration: 0,
+    playbackAnalyticsRecordedGeneration: null,
     idleDisconnectTimer: null,
     disconnecting: false,
 
@@ -194,7 +214,9 @@ function ensureSession(guildId, channelId, adapterCreator) {
   ) {
     try {
       session.connection.destroy();
-    } catch {}
+    } catch {
+      // Rejoining can continue when the old connection is already gone.
+    }
 
     const connection = joinVoiceChannel({
       channelId,
@@ -232,7 +254,9 @@ async function playNext(guildId) {
     if (channel?.send) {
       try {
         await channel.send('🛑 Queue is empty. Add more with !play <song or URL>');
-      } catch {}
+      } catch {
+        // Playback cleanup should not fail because the text channel is unavailable.
+      }
     }
 
     scheduleIdleDisconnect(guildId, session);
@@ -277,11 +301,11 @@ async function playNext(guildId) {
 
   const isWebm = track.filePath.endsWith('.webm');
 
-  session.player.play(
-    createAudioResource(track.filePath, {
-      inputType: isWebm ? StreamType.WebmOpus : StreamType.Arbitrary
-    })
-  );
+  const resource = createAudioResource(track.filePath, {
+    inputType: isWebm ? StreamType.WebmOpus : StreamType.Arbitrary
+  });
+  session.player.play(resource);
+  recordPlaybackStart(session, track);
 
   const { startPlayerUi } = require('../services/playerUiService');
   startPlayerUi(session, channel).catch(() => {});
@@ -290,6 +314,7 @@ async function playNext(guildId) {
 
 function destroyAllConnections() {
   for (const [, session] of sessions.entries()) {
+    recordPlaybackEnd(session, 'shutdown');
     clearAutoplayTimer(session);
     clearIdleDisconnectTimer(session);
     session.lyricsEnabled = false;
@@ -298,7 +323,9 @@ function destroyAllConnections() {
 
     try {
       session.connection?.destroy();
-    } catch {}
+    } catch {
+      // Shutdown should continue when a connection is already closed.
+    }
   }
 
   sessions.clear();

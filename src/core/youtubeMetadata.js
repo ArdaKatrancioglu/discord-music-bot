@@ -1,7 +1,27 @@
 const fs = require('fs');
 const path = require('path');
 const { spawn } = require('child_process');
+const { performance } = require('perf_hooks');
 const { ytDlpPath } = require('./binaries');
+
+function hasCookiesFile() {
+  const cookiesPath = path.join(process.cwd(), 'cookies.txt');
+  return fs.existsSync(cookiesPath) && fs.statSync(cookiesPath).size > 0;
+}
+
+function classifyMetadataError(error) {
+  const text = `${error?.message || ''}\n${error?.stderrData || ''}`.toLowerCase();
+  if (/http error 403|403 forbidden|forbidden/.test(text)) return 'access-denied';
+  if (/http error 429|too many requests|rate.?limit/.test(text)) return 'rate-limited';
+  if (/private video|members-only|age.restricted|sign in to confirm/.test(text)) {
+    return 'restricted';
+  }
+  if (/timed out|temporary failure|connection reset|network is unreachable|failed to resolve/.test(text)) {
+    return 'network';
+  }
+  if (/no alternative results|no video/.test(text)) return 'no-results';
+  return 'unknown';
+}
 
 function extractYouTubeVideoId(value) {
   if (typeof value !== 'string' || !value.trim()) return null;
@@ -40,7 +60,7 @@ function selectMetadataResult(output, excludeVideoIds = new Set()) {
 function fetchMetadata(input, { excludeVideoIds = new Set(), useCookies } = {}) {
   return new Promise((resolve, reject) => {
     const cookiesPath = path.join(process.cwd(), 'cookies.txt');
-    const hasCookies = fs.existsSync(cookiesPath) && fs.statSync(cookiesPath).size > 0;
+    const hasCookies = hasCookiesFile();
     const args = ['--no-playlist', '--dump-json', '--encoding', 'utf-8', '--js-runtimes', 'node'];
 
     const shouldUseCookies = useCookies ?? process.env.USE_COOKIES === 'true';
@@ -67,7 +87,11 @@ function fetchMetadata(input, { excludeVideoIds = new Set(), useCookies } = {}) 
 
     proc.on('close', (code) => {
       if (code !== 0) {
-        reject(new Error(`yt-dlp exited ${code}\n${err}`));
+        const error = new Error(`yt-dlp exited ${code}\n${err}`);
+        error.code = code;
+        error.stderrData = err;
+        error.stdoutData = out;
+        reject(error);
         return;
       }
 
@@ -95,8 +119,68 @@ function fetchMetadata(input, { excludeVideoIds = new Set(), useCookies } = {}) 
   });
 }
 
+async function callAttemptCallback(callback, attempt) {
+  if (!callback) return;
+  try {
+    await callback(attempt);
+  } catch (error) {
+    console.warn('[Metadata Recovery] Attempt callback failed:', error.message);
+  }
+}
+
+async function fetchMetadataWithFallback(
+  input,
+  {
+    excludeVideoIds = new Set(),
+    onAttempt,
+    fetcher = fetchMetadata,
+    cookiesAvailable = hasCookiesFile()
+  } = {}
+) {
+  const cookieModes = cookiesAvailable ? [false, true] : [false];
+  const attempts = [];
+  let lastError = null;
+
+  for (const useCookies of cookieModes) {
+    const started = performance.now();
+    try {
+      const metadata = await fetcher(input, { excludeVideoIds, useCookies });
+      const attempt = {
+        useCookies,
+        success: true,
+        durationMs: performance.now() - started
+      };
+      attempts.push(attempt);
+      await callAttemptCallback(onAttempt, attempt);
+      return {
+        metadata,
+        attempts,
+        usedCookieFallback: useCookies
+      };
+    } catch (error) {
+      lastError = error;
+      const attempt = {
+        useCookies,
+        success: false,
+        durationMs: performance.now() - started,
+        classification: classifyMetadataError(error),
+        error
+      };
+      attempts.push(attempt);
+      await callAttemptCallback(onAttempt, attempt);
+    }
+  }
+
+  lastError.metadataAttempts = attempts;
+  lastError.usedCookieFallback = attempts.some((attempt) => attempt.useCookies);
+  throw lastError;
+}
+
 module.exports = {
+  classifyMetadataError,
   extractYouTubeVideoId,
   fetchMetadata,
+  fetchMetadataWithFallback,
+  hasCookiesFile,
   selectMetadataResult
 };

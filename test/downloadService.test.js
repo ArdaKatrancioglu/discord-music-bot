@@ -1,11 +1,43 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const {
+  buildDownloadAttemptPlan,
   classifyDownloadError,
   diagnoseDownloadError,
   recoveryStrategiesFor,
   summarizeAttempt
 } = require('../src/services/downloadService');
+
+test('download plan tries each strategy without cookies before its cookie fallback', () => {
+  const plan = buildDownloadAttemptPlan({ cookiesAvailable: true });
+
+  assert.deepEqual(
+    plan.slice(0, 4).map(({ strategyKey, useCookies }) => [strategyKey, useCookies]),
+    [
+      ['preferredAudio', false],
+      ['preferredAudio', true],
+      ['anyAudio', false],
+      ['anyAudio', true]
+    ]
+  );
+  assert.equal(plan.at(-1).strategyKey, 'ytDlpDefault');
+  assert.equal(plan.at(-1).useCookies, true);
+});
+
+test('download plan omits cookie attempts when cookies.txt is unavailable', () => {
+  const plan = buildDownloadAttemptPlan({ cookiesAvailable: false });
+
+  assert.deepEqual(
+    plan.map(({ strategyKey, useCookies }) => [strategyKey, useCookies]),
+    [
+      ['preferredAudio', false],
+      ['anyAudio', false],
+      ['alternateClient', false],
+      ['alternateLowBandwidth', false],
+      ['ytDlpDefault', false]
+    ]
+  );
+});
 
 function errorWith(message) {
   return { code: 1, stderrData: `ERROR: ${message}`, stdoutData: '' };

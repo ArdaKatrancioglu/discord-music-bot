@@ -19,6 +19,12 @@ It allows users to play, queue, pause, skip, and cache YouTube audio directly in
   - Filenames automatically include both the **video ID** and **song title**
   - Searches cached titles with multilingual semantic embeddings before falling back to YouTube
 
+- **Measured YouTube recovery pipeline**
+  - Metadata tries without cookies first, then retries with `cookies.txt`
+  - Downloads start with preferred audio-only and progressively try broader modes
+  - Every download mode is tried without cookies before its cookie fallback
+  - Request, cache, metadata, download and real playback analytics persist across restarts
+
 - **Infinite cache playback**
   - `!cache` starts endless random playback of your cached library
   - `!cache off` disables the loop
@@ -165,6 +171,7 @@ project/
 | `!cache`                     | Start infinite random playback from cached songs |
 | `!cache off`                 | Stop the infinite playback loop                  |
 | `l`                          | Toggle synchronized lyrics                       |
+| `!stats` / `stats`           | Show pipeline and playback analytics             |
 
 ## Technical Notes
 
@@ -181,6 +188,9 @@ project/
 ### Performance
 
 - Uses parallel downloaders (**`aria2c`** if available).
+- Runtime analytics are stored in `downloadedMusic/analytics.json`, which persists through the
+  Docker volume. It records success/failure counts, timings, error classifications, fallback
+  usage, downloaded bytes, cache hits, and tracks started/completed/skipped/stopped.
 - Utilizes **in-memory caching** for fast responses.
 - Uses the quantized multilingual E5-small retrieval model, loaded once per process. Existing tracks are
   backfilled automatically at startup; `npm run backfill:embeddings` can run the migration manually.

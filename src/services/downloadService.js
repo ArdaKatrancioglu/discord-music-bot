@@ -1,6 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const { spawn } = require('child_process');
+const { performance } = require('perf_hooks');
 const { resolveBinary, ffmpegPath, ytDlpPath } = require('../core/binaries');
 const { downloadsDir } = require('../core/musicIndex');
 
@@ -32,6 +33,19 @@ const DOWNLOAD_STRATEGIES = {
     alternateClients: true
   }
 };
+
+const DOWNLOAD_STRATEGY_ORDER = [
+  'preferredAudio',
+  'anyAudio',
+  'alternateClient',
+  'alternateLowBandwidth',
+  'ytDlpDefault'
+];
+
+function hasCookiesFile() {
+  const cookiesPath = path.join(process.cwd(), 'cookies.txt');
+  return fs.existsSync(cookiesPath) && fs.statSync(cookiesPath).size > 0;
+}
 
 function buildExtractorArg() {
   // Local runs reach the published Docker port through loopback. Docker Compose
@@ -229,7 +243,7 @@ function findDownloadedFile({ id, titleSan }) {
   );
 }
 
-function summarizeAttempt(strategy, error) {
+function summarizeAttempt(strategy, error, extra = {}) {
   const stderrLines = String(error.stderrData || '')
     .split(/\r?\n/)
     .map((line) => line.trim())
@@ -248,20 +262,41 @@ function summarizeAttempt(strategy, error) {
     classification: classifyDownloadError(error),
     code: error.code,
     message: finalLine || `yt-dlp exited with code ${error.code}`,
-    details: diagnoseDownloadError(error)
+    details: diagnoseDownloadError(error),
+    ...extra
   };
 }
 
-async function downloadTrack({ id, titleSan, url, filenameTemplate, onRetry }) {
-  const attempts = [];
-  const queuedStrategies = [DOWNLOAD_STRATEGIES.preferredAudio];
-  const attemptedNames = new Set();
-  let lastError = null;
+function buildDownloadAttemptPlan({ cookiesAvailable = hasCookiesFile() } = {}) {
+  const cookieModes = cookiesAvailable ? [false, true] : [false];
+  return DOWNLOAD_STRATEGY_ORDER.flatMap((strategyKey) =>
+    cookieModes.map((useCookies) => ({
+      strategyKey,
+      strategy: DOWNLOAD_STRATEGIES[strategyKey],
+      useCookies
+    }))
+  );
+}
 
-  while (queuedStrategies.length) {
-    const strategy = queuedStrategies.shift();
-    if (attemptedNames.has(strategy.name)) continue;
-    attemptedNames.add(strategy.name);
+async function callAttemptCallback(callback, payload) {
+  if (!callback) return;
+  try {
+    await callback(payload);
+  } catch (error) {
+    console.warn('[Download Recovery] Attempt callback failed:', error.message);
+  }
+}
+
+async function downloadTrack({ id, titleSan, url, filenameTemplate, onRetry, onAttempt }) {
+  const attempts = [];
+  const attemptHistory = [];
+  const plan = buildDownloadAttemptPlan();
+  let lastError = null;
+  let successfulAttempt = null;
+
+  for (let index = 0; index < plan.length; index++) {
+    const { strategyKey, strategy, useCookies } = plan[index];
+    const started = performance.now();
 
     try {
       await runYtDlpDownload({
@@ -269,18 +304,46 @@ async function downloadTrack({ id, titleSan, url, filenameTemplate, onRetry }) {
         filenameTemplate,
         format: strategy.format,
         alternateClients: strategy.alternateClients,
+        useCookies,
         useAria2c:
           strategy !== DOWNLOAD_STRATEGIES.preferredAudio &&
           process.env.USE_ARIA2C_FOR_VIDEO_FALLBACK === 'true'
       });
+      const file = findDownloadedFile({ id, titleSan });
+      if (!file) {
+        throw {
+          code: 0,
+          stderrData: 'yt-dlp exited successfully but no playable output file was found.',
+          stdoutData: '',
+          format: strategy.format
+        };
+      }
+      const bytes = fs.statSync(path.join(downloadsDir, file)).size;
+      successfulAttempt = {
+        strategyKey,
+        strategy: strategy.name,
+        useCookies,
+        success: true,
+        durationMs: performance.now() - started,
+        bytes
+      };
+      attemptHistory.push(successfulAttempt);
+      await callAttemptCallback(onAttempt, successfulAttempt);
       lastError = null;
       break;
     } catch (error) {
       lastError = error;
-      const attempt = summarizeAttempt(strategy, error);
+      const attempt = summarizeAttempt(strategy, error, {
+        strategyKey,
+        useCookies,
+        success: false,
+        durationMs: performance.now() - started
+      });
       attempts.push(attempt);
+      attemptHistory.push(attempt);
+      await callAttemptCallback(onAttempt, attempt);
       console.warn(
-        `[Download Recovery] ${attempt.strategy} failed (${attempt.classification}, code ${attempt.code}): ${attempt.message}`
+        `[Download Recovery] ${attempt.strategy} (${useCookies ? 'with cookies' : 'without cookies'}) failed (${attempt.classification}, code ${attempt.code}): ${attempt.message}`
       );
       if (attempt.details.length) {
         console.warn('[Download Recovery] Diagnosis:\n- ' + attempt.details.join('\n- '));
@@ -292,19 +355,16 @@ async function downloadTrack({ id, titleSan, url, filenameTemplate, onRetry }) {
         console.warn('[Download Recovery] yt-dlp stdout:\n' + error.stdoutData.trim());
       }
 
-      const recoveryStrategies = recoveryStrategiesFor(error);
-      if (!recoveryStrategies.length) {
-        queuedStrategies.length = 0;
-      } else {
-        queuedStrategies.push(...recoveryStrategies);
-      }
-      const nextStrategy = queuedStrategies.find((item) => !attemptedNames.has(item.name));
-      if (nextStrategy && onRetry) {
+      if (attempt.classification === 'storage') break;
+
+      const nextAttempt = plan[index + 1];
+      if (nextAttempt && onRetry) {
         try {
           await onRetry({
             failedAttempt: attempt,
-            nextStrategy: nextStrategy.name,
-            attemptNumber: attempts.length + 1
+            nextStrategy: nextAttempt.strategy.name,
+            nextUseCookies: nextAttempt.useCookies,
+            attemptNumber: attemptHistory.length + 1
           });
         } catch (callbackError) {
           console.warn('[Download Recovery] Could not send retry status:', callbackError.message);
@@ -319,7 +379,7 @@ async function downloadTrack({ id, titleSan, url, filenameTemplate, onRetry }) {
     const diagnostic = attempts
       .map(
         (attempt, index) =>
-          `${index + 1}. ${attempt.strategy}: ${attempt.classification} (${attempt.message})`
+          `${index + 1}. ${attempt.strategy} (${attempt.useCookies ? 'with cookies' : 'without cookies'}): ${attempt.classification} (${attempt.message})`
       )
       .join('\n');
     throw {
@@ -327,7 +387,8 @@ async function downloadTrack({ id, titleSan, url, filenameTemplate, onRetry }) {
       classification: lastError ? classifyDownloadError(lastError) : 'missing-output',
       stderrData: diagnostic || 'Downloaded file not found after yt-dlp reported success.',
       stdoutData: lastError?.stdoutData || '',
-      attempts
+      attempts,
+      attemptHistory
     };
   }
 
@@ -337,12 +398,17 @@ async function downloadTrack({ id, titleSan, url, filenameTemplate, onRetry }) {
     filePath: filepath,
     usedFallback: attempts.length > 0,
     attempts,
-    strategy: [...attemptedNames].at(-1)
+    attemptHistory,
+    strategy: successfulAttempt.strategy,
+    strategyKey: successfulAttempt.strategyKey,
+    usedCookies: successfulAttempt.useCookies
   };
 }
 
 module.exports = {
   DOWNLOAD_STRATEGIES,
+  DOWNLOAD_STRATEGY_ORDER,
+  buildDownloadAttemptPlan,
   buildExtractorArg,
   buildExtractorArgs,
   classifyDownloadError,
