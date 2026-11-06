@@ -1,3 +1,4 @@
+const { formatTrackName } = require('../../utils/titleUtils');
 const { sessions } = require('../../core/sessionManager');
 const { resolveGuildIdForBoundAwareCommand } = require('../../services/messageContextService');
 const { findNextAutoplayTrack } = require('../../services/autoplayRuntimeService');
@@ -42,8 +43,8 @@ module.exports = {
       }
 
       await message.reply(
-        `✅ Autoplay selected based on **${next.referenceTrack.title}**:\n` +
-          `**${next.title}**\n` +
+        `✅ Autoplay selected based on **${formatTrackName(next.referenceTrack)}**:\n` +
+          `**${formatTrackName(next)}**\n` +
           `Source: ${next.source}\n` +
           `Score: ${next.score}\n` +
           `🔗 ${next.url}`

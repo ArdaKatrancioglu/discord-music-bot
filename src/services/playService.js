@@ -2,7 +2,7 @@
 
 const { performance } = require('perf_hooks');
 const { MessageFlags } = require('discord.js');
-const { sanitizeTitle } = require('../utils/titleUtils');
+const { sanitizeTitle, formatTrackName } = require('../utils/titleUtils');
 const {
   getTrackFromCache,
   addTrackToCache,
@@ -32,6 +32,13 @@ const {
 } = require('./analyticsService');
 
 const repeatedQueries = new RepeatedQueryTracker();
+const path = require('path');
+const { indexPath } = require('../core/musicIndex');
+const { normalizeTrack } = require('../core/libraryMigration');
+const { YouTubeMusicResolver, applyMusicMetadata } = require('../core/youtubeMusicMetadata');
+const musicResolver = new YouTubeMusicResolver({
+  cachePath: path.join(path.dirname(indexPath), 'youtube-music-cache.json')
+});
 
 async function handlePlayRequest(client, message, query) {
   const requestStartedAt = performance.now();
@@ -116,10 +123,10 @@ async function handlePlayRequest(client, message, query) {
     const track = {
       ...cached,
       source: 'cache',
-      displayTitle: meta?.realTitle || cached.displayTitle || cached.title,
-      artist: meta?.artist || cached.artist || null,
+      displayTitle: cached.title,
+      artist: cached.artist || null,
       uploader: meta?.uploader || cached.uploader || null,
-      album: meta?.album || cached.album || null,
+      album: cached.album || null,
       thumbnail: meta?.thumbnail || cached.thumbnail || null,
       requester
     };
@@ -127,7 +134,7 @@ async function handlePlayRequest(client, message, query) {
     recordCacheHit({ source: matchSource });
     finishPlayRequest({ outcome: 'success', source: 'cache' });
     if (!result.startedImmediately) {
-      await message.reply(`🔄 Queued from cache: **${track.title}**`);
+      await message.reply(`🔄 Queued from cache: **${formatTrackName(track)}**`);
     }
     if (!queryIsUrl) repeatedQueries.markServed(message.author.id, query, track);
     return matchSource;
@@ -281,16 +288,18 @@ async function handlePlayRequest(client, message, query) {
       return;
     }
 
-    const libraryTrack = {
+    let libraryTrack = normalizeTrack({
       id,
       title,
+      videoTitle: meta.realTitle || title,
       titleSan,
       filePath: result.filePath,
       url,
       duration: meta.duration || null,
       displayTitle: meta.realTitle || title,
       thumbnail: meta.thumbnail || null
-    };
+    });
+    libraryTrack = applyMusicMetadata(libraryTrack, await musicResolver.resolve(libraryTrack));
     addTrackToCache(libraryTrack);
     try {
       await scheduleTrackEmbedding(libraryTrack);
@@ -301,18 +310,23 @@ async function handlePlayRequest(client, message, query) {
     const track = {
       ...libraryTrack,
       source: 'download',
-      artist: meta.artist || null,
+      artist: libraryTrack.artist,
       uploader: meta.uploader || null,
-      album: meta.album || null,
+      album: libraryTrack.album,
       requester
     };
+
+    if ((session.downloadGeneration || 0) !== generationAtStart) {
+      finishPlayRequest({ outcome: 'cancelled', reason: 'session-stopped-during-metadata' });
+      return;
+    }
 
     const queueResult = queueTrackIntoSession(session, targetGuildId, track);
     finishPlayRequest({ outcome: 'success', source: 'download' });
     if (!queryIsUrl) repeatedQueries.markServed(message.author.id, query, track);
 
     if (!queueResult.startedImmediately) {
-      await message.reply(`🔄 Queued: **${track.title}**`);
+      await message.reply(`🔄 Queued: **${formatTrackName(track)}**`);
     }
 
     const dlEnd = performance.now();

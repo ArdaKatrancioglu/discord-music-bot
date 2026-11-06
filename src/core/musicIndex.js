@@ -1,170 +1,125 @@
-// musicIndex.js
 const fs = require('fs');
 const path = require('path');
 const { parseCachedMp3Filename } = require('../utils/titleUtils');
+const { atomicWrite } = require('./atomicFile');
+const { migrateLocalLibrary, normalizeTrack, readLibrary } = require('./libraryMigration');
+const { readLyrics, writeLyrics } = require('./lyricsStore');
 
-/**
- * JSON dosyası: downloadedMusic/index.json
- * Şema:
- * {
- *   "version": 1,
- *   "tracks": [
- *     { "id": "videoID", "title": "video name", "titleSan": "sanitized", "filePath": "/.../id_title.mp3", "url": "video link" }
- *   ]
- * }
- */
+const indexPath = path.resolve(
+  process.env.MUSIC_INDEX_PATH || path.join(process.cwd(), 'downloadedMusic', 'index.json')
+);
+const downloadsDir = path.dirname(indexPath);
+fs.mkdirSync(downloadsDir, { recursive: true });
+// A corrupt existing index must never be silently replaced with an empty library.
+let index = fs.existsSync(indexPath) ? migrateLocalLibrary(indexPath) : { version: 2, tracks: [] };
 
-const downloadsDir = path.join(process.cwd(), 'downloadedMusic');
-if (!fs.existsSync(downloadsDir)) fs.mkdirSync(downloadsDir, { recursive: true });
-
-const indexPath = path.join(downloadsDir, 'index.json');
-const debugLog = () => {};
-
-function loadIndex() {
-  try {
-    if (fs.existsSync(indexPath)) {
-      const raw = fs.readFileSync(indexPath, 'utf8');
-      const obj = JSON.parse(raw);
-      if (obj && Array.isArray(obj.tracks)) return obj;
-    }
-  } catch (e) {
-    console.warn('[Init] Could not read index.json, will be recreated:', e.message);
-  }
-  return { version: 1, tracks: [] };
+function saveIndex(next) {
+  atomicWrite(indexPath, JSON.stringify(next, null, 2));
+  index = next;
 }
 
-function saveIndex(idx) {
-  try {
-    fs.writeFileSync(indexPath, JSON.stringify(idx, null, 2), 'utf8');
-    return true;
-  } catch (e) {
-    console.warn('[Index] Could not write index.json:', e.message);
-    return false;
-  }
-}
-
-let index = loadIndex();
-
-// Klasördeki mp3'leri tara ve index'e ekle (mevcutsa dokunma)
 for (const file of fs.readdirSync(downloadsDir)) {
-  if (!file.match(/\.(mp3|m4a|webm)$/i)) continue;
+  if (!/\.(mp3|m4a|webm)$/i.test(file)) continue;
   const full = path.join(downloadsDir, file);
   const { id, titleSan, title } = parseCachedMp3Filename(file);
-
-  const exists =
-    index.tracks.find((t) => t.filePath === full) ||
-    (id && index.tracks.find((t) => t.id === id)) ||
-    index.tracks.find((t) => t.titleSan === titleSan);
-
-  if (!exists) {
-    index.tracks.push({
-      id: id || null,
-      title,
-      titleSan,
-      filePath: full,
-      url: null // mevcut dosyalardan URL bilinmiyor
-    });
-  }
+  const exists = index.tracks.some(
+    (track) =>
+      track.filePath === full ||
+      (id && track.id === id) ||
+      (!id && !track.id && track.titleSan === titleSan)
+  );
+  if (!exists)
+    index.tracks.push(
+      normalizeTrack({
+        id,
+        title,
+        videoTitle: title,
+        titleSan,
+        filePath: full,
+        url: id ? `https://www.youtube.com/watch?v=${id}` : null
+      })
+    );
 }
 saveIndex(index);
 
 function getTrackFromCache({ id, titleSan }) {
   if (id) {
-    const byId = index.tracks.find((t) => t.id === id);
-    if (byId) return byId;
+    return (
+      index.tracks.find((track) => track.id === id) ||
+      index.tracks.find(
+        (track) =>
+          !/^[A-Za-z0-9_-]{11}$/.test(track.id || '') &&
+          track.filePath &&
+          parseCachedMp3Filename(path.basename(track.filePath)).id === id
+      ) ||
+      null
+    );
   }
-  if (titleSan) {
-    const byTitle = index.tracks.find((t) => t.titleSan === titleSan);
-    if (byTitle) return byTitle;
-  }
-  return null;
+  return titleSan ? index.tracks.find((track) => track.titleSan === titleSan) || null : null;
 }
 
 function addTrackToCache(track) {
-  const byIdIdx = track.id ? index.tracks.findIndex((t) => t.id === track.id) : -1;
-  const byPathIdx = index.tracks.findIndex((t) => t.filePath === track.filePath);
-  const byTitleIdx = index.tracks.findIndex((t) => t.titleSan === track.titleSan);
-
-  const idxToUse = byIdIdx >= 0 ? byIdIdx : byPathIdx >= 0 ? byPathIdx : byTitleIdx;
-
-  if (idxToUse >= 0) {
-    index.tracks[idxToUse] = { ...index.tracks[idxToUse], ...track };
-  } else {
-    index.tracks.push(track);
-  }
-  saveIndex(index);
+  const next = readLibrary(indexPath);
+  const position = next.tracks.findIndex(
+    (item) =>
+      (track.id && item.id === track.id) ||
+      (track.filePath && item.filePath === track.filePath) ||
+      (!track.id && !item.id && track.titleSan && item.titleSan === track.titleSan)
+  );
+  const merged = normalizeTrack(position >= 0 ? { ...next.tracks[position], ...track } : track);
+  if (merged.lyrics && !readLyrics(indexPath, merged.lyrics)) merged.lyrics = null;
+  if (position >= 0) next.tracks[position] = merged;
+  else next.tracks.push(merged);
+  saveIndex(next);
+  return merged;
 }
 
 function updateTrackLyrics(trackId, lyrics) {
-  if (!trackId) {
-    console.warn('[Lyrics Cache] Cannot update lyrics: track has no id.');
-    return false;
-  }
-
-  let latestIndex;
+  if (!trackId) return false;
   try {
-    const raw = fs.readFileSync(indexPath, 'utf8');
-    latestIndex = JSON.parse(raw);
+    const next = readLibrary(indexPath);
+    const track = next.tracks.find((item) => item.id === trackId);
+    if (!track) return false;
+    if (lyrics && typeof lyrics === 'object') {
+      const reference = writeLyrics(indexPath, track, lyrics);
+      if (!reference) return false;
+      track.lyrics = reference;
+    } else if (lyrics === null) track.lyrics = null;
+    else if (readLyrics(indexPath, lyrics)) track.lyrics = lyrics;
+    else return false;
+    saveIndex(next);
+    return true;
   } catch (error) {
-    console.warn(
-      '[Lyrics Cache] Could not read index.json; lyrics were not cached:',
-      error.message
-    );
+    console.warn('[Lyrics Cache] Could not persist lyrics:', error.message);
     return false;
   }
-
-  if (!latestIndex || !Array.isArray(latestIndex.tracks)) {
-    console.warn('[Lyrics Cache] Invalid index.json structure; lyrics were not cached.');
-    return false;
-  }
-
-  const track = latestIndex.tracks.find((item) => item.id === trackId);
-  if (!track) {
-    console.warn(`[Lyrics Cache] Track ${trackId} was not found in index.json.`);
-    return false;
-  }
-
-  track.lyrics = lyrics;
-  if (!saveIndex(latestIndex)) return false;
-
-  index = latestIndex;
-  debugLog(`[Lyrics Cache] Updated persistent lyrics for track ${trackId}: ${lyrics.status}.`);
-  return true;
 }
 
 function updateTrackLyricsOffset(trackId, lyricsOffset, titleSan) {
-  if (!trackId && !titleSan) return false;
-
-  let latestIndex;
   try {
-    latestIndex = JSON.parse(fs.readFileSync(indexPath, 'utf8'));
+    const next = readLibrary(indexPath);
+    const track = next.tracks.find((item) =>
+      trackId ? item.id === trackId : titleSan && item.titleSan === titleSan
+    );
+    if (!track) return false;
+    track.lyricsOffset = Number(lyricsOffset) || 0;
+    saveIndex(next);
+    return true;
   } catch (error) {
-    console.warn('[Lyrics Offset] Could not read index.json:', error.message);
+    console.warn('[Lyrics Offset] Could not persist offset:', error.message);
     return false;
   }
-
-  const track = latestIndex?.tracks?.find(
-    (item) => (trackId && item.id === trackId) || (titleSan && item.titleSan === titleSan)
-  );
-  if (!track) {
-    console.warn(`[Lyrics Offset] Track ${trackId || titleSan} was not found in index.json.`);
-    return false;
-  }
-
-  track.lyricsOffset = Number(lyricsOffset) || 0;
-  if (!saveIndex(latestIndex)) return false;
-  index = latestIndex;
-  return true;
 }
 
 function listAllCachedTracksUnique() {
-  return [...index.tracks];
+  return index.tracks.map((track) => ({ ...track }));
 }
 
-const uniqCount = new Set(index.tracks.map((t) => t.filePath)).size;
-console.log(`[Init] Indexed downloads: ${uniqCount} file(s)`);
-
+console.log(
+  `[Init] Indexed downloads: ${new Set(index.tracks.map((track) => track.filePath)).size} file(s)`
+);
 module.exports = {
+  indexPath,
   downloadsDir,
   getTrackFromCache,
   addTrackToCache,

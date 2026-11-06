@@ -11,6 +11,7 @@ const {
   getPlaybackPosition,
   parseTrackIdentity
 } = require('./lyricsService');
+const { formatTrackName: formatDisplayName } = require('../utils/titleUtils');
 
 const PLAYER_CUSTOM_ID_PREFIX = 'music-player:';
 const PROGRESS_SEGMENTS = 20;
@@ -45,18 +46,23 @@ function buildProgressBar(position, duration, segments = PROGRESS_SEGMENTS) {
 }
 
 function escapeMarkdown(value) {
-  return String(value || '').replace(/([\\`*_{}[\]()<>#+\-.!|])/g, '\\$1');
+  return String(value || '').replace(/([\\`*_{}[\]<>|~])/g, '\\$1');
 }
 
 function getDisplayIdentity(track) {
+  if (track?.videoTitle !== undefined) return track;
   const displayTrack = {
     ...track,
-    title: track?.displayTitle || track?.realTitle || track?.title
+    title:
+      track?.videoTitle !== undefined
+        ? track?.title
+        : track?.displayTitle || track?.realTitle || track?.title
   };
   return parseTrackIdentity(displayTrack);
 }
 
 function getArtworkUrl(track) {
+  if (track?.artworkUrl) return track.artworkUrl;
   if (track?.thumbnail) return track.thumbnail;
   if (!track?.url) return null;
   try {
@@ -79,12 +85,14 @@ function getUpNextTrack(session) {
 
 function formatTrackName(track) {
   if (!track) return 'Queue empty';
-  const identity = getDisplayIdentity(track);
-  return identity.artist ? `${identity.artist} — ${identity.title}` : identity.title || track.title;
+  return formatDisplayName(getDisplayIdentity(track));
 }
 
 function buildLyricsText(session) {
   if (!session.lyricsEnabled) return null;
+  if (session.lyricsStatus === 'plain' && session.lyricsPlainText) {
+    return escapeMarkdown(session.lyricsPlainText).slice(0, 2600);
+  }
   if (session.lyricsStatus === 'loading') return 'Searching for synchronized lyrics…';
   if (session.lyricsStatus !== 'synced' || !session.lyricsLines?.length) {
     return 'Synchronized lyrics are unavailable for this track.';
@@ -113,14 +121,18 @@ function buildPlayerPayload(session, { stopped = false } = {}) {
     embed.setTitle('⏹ Playback stopped').setDescription('The player is ready for another track.');
   } else {
     const track = session.currentTrack;
-    const identity = getDisplayIdentity(track);
-    const displayTitle = identity.artist
-      ? `${identity.artist} — ${identity.title}`
-      : identity.title || track.title || 'Unknown track';
-    const linkedTitle = track.url
-      ? `[${escapeMarkdown(displayTitle)}](${track.url})`
-      : `**${escapeMarkdown(displayTitle)}**`;
-    const description = [linkedTitle];
+    const displayTitle = formatTrackName(track);
+    // Discord's embed title is already emphasized and links to the embed URL.
+    // Avoid nested Markdown links, which can expose escapes in some clients.
+    const title = displayTitle.slice(0, 256).replace(/[\uD800-\uDBFF]$/, '');
+    embed.setAuthor({ name: '🎵\u2003NOW PLAYING' }).setTitle(title);
+    try {
+      const url = new URL(track.url);
+      if (url.protocol === 'https:' || url.protocol === 'http:') embed.setURL(url.href);
+    } catch {
+      // Keep the title readable when a legacy track has no valid URL.
+    }
+    const description = [];
 
     const upNext = getUpNextTrack(session);
 
@@ -139,7 +151,7 @@ function buildPlayerPayload(session, { stopped = false } = {}) {
       statusParts.push(`Offset: ${lyricsOffset >= 0 ? '+' : ''}${lyricsOffset}s`);
     }
 
-    embed.setTitle('🎵\u2003NOW PLAYING').setDescription(description.join('\n\n'));
+    embed.setDescription(description.join('\n\n'));
     embed.addFields({ name: '\u200b', value: progress });
     if (statusParts.length) {
       embed.addFields({ name: '\u200b', value: statusParts.join('  •  ') });

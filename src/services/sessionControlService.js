@@ -4,6 +4,7 @@ const { clearAutoplayTimer } = require('./autoplaySchedulerService');
 const { clearIdleDisconnectTimer } = require('../core/sessionManager');
 const { stopLyricsWorker, wakeLyricsWorker } = require('./lyricsService');
 const { recordPlaybackEnd } = require('./analyticsService');
+const { formatTrackName } = require('../utils/titleUtils');
 
 function pauseSession(session) {
   clearIdleDisconnectTimer(session);
@@ -75,7 +76,7 @@ function stopSession(session) {
 function skipSession(session) {
   if (!session.currentTrack) return null;
 
-  const skippedTitle = session.currentTrack.title;
+  const skippedTitle = formatTrackName(session.currentTrack);
   recordPlaybackEnd(session, 'skipped');
   clearIdleDisconnectTimer(session);
   stopLyricsWorker(session);

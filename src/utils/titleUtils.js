@@ -1,11 +1,19 @@
 // titleUtils.js
 const path = require('path');
 
+function formatTrackName(track) {
+  const title = String(
+    track?.title || track?.videoTitle || track?.displayTitle || 'Unknown track'
+  ).trim();
+  const artist = String(track?.artist || '').trim();
+  return artist ? `${title} – ${artist}` : title;
+}
+
 function sanitizeTitle(title) {
   return title
     .normalize('NFKD')
-    .replace(/[\/\\:*?"<>|]+/g, '') // Windows yasakları
-    .replace(/[^\w\s\-.()&,'\[\]]+/g, '') // dosya için güvenli karakter seti
+    .replace(/[/\\:*?"<>|]+/g, '') // Windows yasakları
+    .replace(/[^\w\s\-.()&,'[\]]+/g, '') // dosya için güvenli karakter seti
     .replace(/\s+/g, ' ')
     .trim()
     .replace(/\s/g, '_')
@@ -19,8 +27,8 @@ function unsanitizeTitle(filePart) {
 function parseCachedMp3Filename(file) {
   // Yeni biçim:  <id>_<sanitizedTitle>.mp3
   // Eski biçim:  <title>.mp3  (ID yok)
-  const base = path.basename(file, '.mp3');
-  const m = base.match(/^([A-Za-z0-9_-]{6,})_(.+)$/); // YouTube ID genelde 11 ama esnek bırakalım
+  const base = path.basename(file, path.extname(file));
+  const m = base.match(/^([A-Za-z0-9_-]{11})_(.+)$/); // YouTube ID genelde 11 ama esnek bırakalım
   if (m) {
     return { id: m[1], titleSan: m[2], title: unsanitizeTitle(m[2]) };
   }
@@ -37,6 +45,7 @@ function shuffle(arr) {
 }
 
 module.exports = {
+  formatTrackName,
   sanitizeTitle,
   unsanitizeTitle,
   parseCachedMp3Filename,

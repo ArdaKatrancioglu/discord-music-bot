@@ -46,22 +46,22 @@ test('duration and progress helpers produce a fixed-width readable clock', () =>
   assert.equal([...progress.match(/[─●]/g)].length, 20);
 });
 
-test('player payload uses one compact embed with linked title, lyrics, artwork and two rows', () => {
+test('player payload uses a native linked title, lyrics, artwork and two rows', () => {
   const payload = buildPlayerPayload(createSession());
   const embed = payload.embeds[0].toJSON();
 
-  assert.equal(embed.title, '🎵\u2003NOW PLAYING');
-  assert.ok(
-    embed.description.includes('[Artist — Song](https://www.youtube.com/watch?v=video-id)')
-  );
+  assert.equal(embed.author.name, '🎵\u2003NOW PLAYING');
+  assert.equal(embed.title, 'Song – Artist');
+  assert.equal(embed.url, 'https://www.youtube.com/watch?v=video-id');
+  assert.ok(embed.description.startsWith('♪ Previous'));
+  assert.doesNotMatch(embed.description, /\\-/);
   assert.match(embed.description, /♪ Previous/);
   assert.match(embed.description, /▶ \*\*Current\*\*/);
   assert.match(embed.description, /♪ Next/);
   assert.doesNotMatch(embed.description, /Requested by:/);
   assert.doesNotMatch(embed.description, /-{3,}|—{3,}/);
-  assert.match(embed.description, /video-id\)\n\n♪ Previous/);
   assert.doesNotMatch(embed.description, /\nAlbum\n/);
-  assert.match(embed.description, /\*Up Next: Next Artist — Next Song\*$/);
+  assert.ok(embed.description.endsWith('*Up Next: Next Song – Next Artist*'));
   assert.equal(embed.thumbnail.url, 'https://i.ytimg.com/vi/video-id/hqdefault.jpg');
   assert.equal(payload.components.length, 2);
   assert.deepEqual(
@@ -219,4 +219,54 @@ test('zero offset, hidden lyrics and cache playback omit irrelevant controls', (
   const cacheJson = JSON.stringify(cachePlayback.components.map((row) => row.toJSON()));
   assert.doesNotMatch(cacheJson, /:autoplay/);
   assert.doesNotMatch(cachePlayback.embeds[0].toJSON().fields[1].value, /Autoplay:/);
+});
+
+test('resolved tracks display a native linked Title – Artist without an escaped separator', () => {
+  const currentTrack = {
+    title: 'Yalan',
+    artist: 'Edis',
+    videoTitle: 'Edis - Yalan (Official Video)',
+    displayTitle: 'Old video display',
+    url: 'https://youtube.com/watch?v=bpOSxM0rNPM'
+  };
+  const payload = buildPlayerPayload(
+    createSession({
+      currentTrack,
+      queue: [
+        {
+          title: 'A documentary - Episode 2',
+          artist: null,
+          videoTitle: 'A documentary - Episode 2'
+        }
+      ]
+    })
+  );
+  const embed = payload.embeds[0].toJSON();
+  assert.equal(embed.title, 'Yalan – Edis');
+  assert.equal(embed.url, 'https://youtube.com/watch?v=bpOSxM0rNPM');
+  assert.doesNotMatch(embed.title, /\\-|Official Video|Old video display/);
+  assert.ok(embed.description.includes('A documentary - Episode 2'));
+});
+
+test('tracks without a URL retain a readable title', () => {
+  const currentTrack = { title: 'Yalan', artist: 'Edis', videoTitle: 'Video', url: null };
+  const embed = buildPlayerPayload(createSession({ currentTrack })).embeds[0].toJSON();
+  assert.equal(embed.title, 'Yalan – Edis');
+  assert.equal(embed.url, undefined);
+});
+
+test('parentheses in song names remain unchanged and the YouTube URL stays clickable', () => {
+  const currentTrack = {
+    title: 'Zehir (feat. Pango)',
+    artist: 'manifest',
+    videoTitle: 'Zehir official video',
+    url: 'https://www.youtube.com/watch?v=xM4Msflqxi0'
+  };
+  const session = createSession({ currentTrack });
+  session.lyricsLines[1].text = 'A lyric (with parentheses)';
+  const embed = buildPlayerPayload(session).embeds[0].toJSON();
+  assert.equal(embed.title, 'Zehir (feat. Pango) – manifest');
+  assert.equal(embed.url, currentTrack.url);
+  assert.match(embed.description, /A lyric \(with parentheses\)/);
+  assert.doesNotMatch(JSON.stringify(embed), /\\\\[()]/);
 });

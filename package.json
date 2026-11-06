@@ -11,8 +11,10 @@
     "format": "prettier --write .",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
-    "test": "node --test",
-    "check": "npm run format && npm run lint:fix"
+    "test": "node --require ./scripts/test-env.js --test",
+    "check": "npm run format && npm run lint:fix",
+    "migrate:library": "node scripts/migrate-library.js",
+    "prepare:library": "node scripts/prepare-library.js"
   },
   "keywords": [],
   "author": "",
@@ -26,10 +28,12 @@
     "@stablelib/xchacha20poly1305": "^2.0.1",
     "discord.js": "^14.22.1",
     "dotenv": "^17.2.3",
+    "fast-xml-parser": "^5.12.0",
     "libsodium-wrappers": "^0.7.15",
     "opusscript": "^0.0.8",
     "playwright": "^1.59.1",
-    "sodium-native": "^5.0.9"
+    "sodium-native": "^5.0.9",
+    "youtubei.js": "^18.3.0"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

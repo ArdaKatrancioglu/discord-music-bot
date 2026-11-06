@@ -1,3 +1,4 @@
+const { formatTrackName } = require('../../utils/titleUtils');
 const { sessions } = require('../../core/sessionManager');
 const { resolveGuildIdForBoundAwareCommand } = require('../../services/messageContextService');
 
@@ -30,12 +31,12 @@ module.exports = {
         t.title === session.currentTrack.title;
 
       await message.reply(
-        `${isCurrentTrack ? '▶️' : '🔁'} ${i + 1}. **${t.title}**\n🔗 ${t.url || 'URL unknown'}`
+        `${isCurrentTrack ? '▶️' : '🔁'} ${i + 1}. **${formatTrackName(t)}**\n🔗 ${t.url || 'URL unknown'}`
       );
     }
 
     if (remainingTracks.length > 0) {
-      const rest = remainingTracks.map((t, i) => `${i + 6}. ${t.title}`).join('\n');
+      const rest = remainingTracks.map((t, i) => `${i + 6}. ${formatTrackName(t)}`).join('\n');
 
       await message.reply(`And ${remainingTracks.length} more track(s):\n${rest}`);
     }

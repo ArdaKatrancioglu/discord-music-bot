@@ -1,3 +1,4 @@
+const { formatTrackName } = require('../../utils/titleUtils');
 const { sessions } = require('../../core/sessionManager');
 const { resolveGuildIdForBoundAwareCommand } = require('../../services/messageContextService');
 const { skipSession } = require('../../services/sessionControlService');
@@ -28,8 +29,8 @@ module.exports = {
 
         if (next) {
           await message.reply(
-            `✅ Autoplay selected based on **${next.referenceTrack.title}**:\n` +
-              `**${next.title}**\n` +
+            `✅ Autoplay selected based on **${formatTrackName(next.referenceTrack)}**:\n` +
+              `**${formatTrackName(next)}**\n` +
               `🔗 ${next.url}`
           );
 
@@ -53,8 +54,8 @@ module.exports = {
 
       if (next) {
         await message.reply(
-          `✅ Autoplay selected based on **${next.referenceTrack.title}**:\n` +
-            `**${next.title}**\n` +
+          `✅ Autoplay selected based on **${formatTrackName(next.referenceTrack)}**:\n` +
+            `**${formatTrackName(next)}**\n` +
             `🔗 ${next.url}`
         );
 

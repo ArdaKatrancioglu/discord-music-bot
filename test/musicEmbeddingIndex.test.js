@@ -135,3 +135,72 @@ test('semantic cache confidence keeps strong overlap and unambiguous cross-langu
   assert.equal(ambiguous.match, null);
   assert.equal(ambiguous.reason, 'ambiguous nearest neighbors');
 });
+
+test('clean artist/title input uses E5 retrieval prefixes and invalidates changed metadata and legacy records', async () => {
+  const { embeddingTitle } = require('../src/core/musicEmbeddingIndex');
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'clean-embeddings-'));
+  const storePath = path.join(directory, 'embeddings.jsonl');
+  const track = {
+    id: 'bpOSxM0rNPM',
+    title: 'Do I Wanna Know?',
+    artist: 'Arctic Monkeys',
+    titleSan: 'noisy_file',
+    videoTitle: 'Official Video',
+    displayTitle: 'Old display'
+  };
+  const calls = [];
+  const createExtractor = async () => async (texts, options) => {
+    assert.deepEqual(options, { pooling: 'mean', normalize: true });
+    calls.push(texts);
+    return { dims: [texts.length, 2], data: Float32Array.from(texts.flatMap(() => [1, 0])) };
+  };
+  fs.writeFileSync(
+    storePath,
+    JSON.stringify({
+      key: 'id:bpOSxM0rNPM',
+      model: 'Xenova/multilingual-e5-small',
+      titleHash: 'old',
+      embedding: [0, 1]
+    }) + '\n'
+  );
+  try {
+    assert.equal(embeddingTitle(track), 'Do I Wanna Know? Arctic Monkeys');
+    const index = new MusicEmbeddingIndex({ storePath, createExtractor });
+    assert.equal((await index.backfill([track])).generated, 1);
+    assert.deepEqual(calls[0], ['passage: Do I Wanna Know? Arctic Monkeys']);
+    assert.equal((await index.backfill([track])).generated, 0);
+    await index.search('Arctic Monkeys', [track]);
+    assert.deepEqual(calls[1], ['query: Arctic Monkeys']);
+    const changed = { ...track, artist: 'Corrected artist' };
+    assert.equal(
+      (await index.search('query', [changed])).match,
+      null,
+      'stale vectors must never be returned before backfill'
+    );
+    assert.equal((await index.backfill([changed])).generated, 1);
+    assert.equal(
+      (
+        await index.backfill([
+          { ...changed, videoTitle: 'Different video title', titleSan: 'changed' }
+        ])
+      ).generated,
+      0
+    );
+    const restarted = new MusicEmbeddingIndex({ storePath, createExtractor });
+    assert.equal((await restarted.backfill([changed])).generated, 0);
+    const records = fs
+      .readFileSync(storePath, 'utf8')
+      .trim()
+      .split('\n')
+      .filter(Boolean)
+      .map(JSON.parse);
+    assert.notEqual(records.at(-1).inputHash, records.at(-2).inputHash);
+    assert.equal(records.at(-1).key, 'id:bpOSxM0rNPM');
+    assert.equal(records.at(-1).inputText, 'Do I Wanna Know? Corrected artist');
+    assert.equal(findHighConfidenceTextMatch('Arctic Monkeys', [track]), track);
+    assert.equal(findHighConfidenceTextMatch('Do I Wanna Know?', [track]), track);
+    assert.equal(findHighConfidenceTextMatch('Arctic Monkeys Do I Wanna Know', [track]), track);
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});

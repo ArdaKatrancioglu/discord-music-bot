@@ -7,6 +7,7 @@ const { performance } = require('perf_hooks');
 const DEFAULT_MODEL = 'Xenova/multilingual-e5-small';
 const DEFAULT_THRESHOLD = 0.84;
 const DEFAULT_BATCH_SIZE = 8;
+const PREPROCESSING_VERSION = 3;
 
 function normalizeVector(values) {
   const vector = Float32Array.from(values);
@@ -32,13 +33,25 @@ function trackKey(track) {
 }
 
 function embeddingTitle(track) {
-  return String(track.displayTitle || track.title || track.titleSan || '')
+  const title = String(
+    track.title || track.videoTitle || track.displayTitle || track.titleSan || ''
+  )
+    .normalize('NFKC')
     .replace(/_/g, ' ')
+    .replace(/[ \t]+/g, ' ')
     .trim();
+  const artist = String(track.artist || '')
+    .normalize('NFKC')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return artist && title ? `${title} ${artist}` : title;
 }
 
-function titleHash(title, model) {
-  return crypto.createHash('sha256').update(`${model}\0${title}`).digest('hex');
+function inputHash(input, model) {
+  return crypto
+    .createHash('sha256')
+    .update(`${PREPROCESSING_VERSION}\0${model}\0${input}`)
+    .digest('hex');
 }
 
 /**
@@ -48,7 +61,7 @@ function titleHash(title, model) {
 class BruteForceVectorIndex {
   constructor() {
     this.records = new Map();
-    this.recordsByTitleHash = new Map();
+    this.recordsByInputHash = new Map();
   }
 
   upsert(record) {
@@ -57,15 +70,15 @@ class BruteForceVectorIndex {
       embedding: normalizeVector(record.embedding)
     };
     this.records.set(record.key, normalizedRecord);
-    this.recordsByTitleHash.set(record.titleHash, normalizedRecord);
+    this.recordsByInputHash.set(record.inputHash, normalizedRecord);
   }
 
   get(key) {
     return this.records.get(key);
   }
 
-  getByTitleHash(hash) {
-    return this.recordsByTitleHash.get(hash);
+  getByInputHash(hash) {
+    return this.recordsByInputHash.get(hash);
   }
 
   get size() {
@@ -93,9 +106,14 @@ class MusicEmbeddingIndex {
     batchSize = DEFAULT_BATCH_SIZE,
     createExtractor
   } = {}) {
-    this.storePath = storePath || path.join(process.cwd(), 'downloadedMusic', 'embeddings.jsonl');
+    this.storePath =
+      storePath ||
+      path.join(
+        path.dirname(path.resolve(process.env.MUSIC_INDEX_PATH || 'downloadedMusic/index.json')),
+        'embeddings.jsonl'
+      );
     this.model = model;
-    this.inputPrefix = model.includes('multilingual-e5') ? 'query: ' : '';
+    this.isE5 = model.includes('multilingual-e5');
     this.threshold = threshold;
     this.batchSize = batchSize;
     this.createExtractor = createExtractor || this.#createDefaultExtractor.bind(this);
@@ -109,7 +127,9 @@ class MusicEmbeddingIndex {
   }
 
   async #createDefaultExtractor() {
-    const { pipeline } = await import('@huggingface/transformers');
+    const { pipeline, env } = await import('@huggingface/transformers');
+    if (process.env.EMBEDDING_CACHE_DIR)
+      env.cacheDir = path.resolve(process.env.EMBEDDING_CACHE_DIR);
     console.log(`[Embeddings] Loading ${this.model} (q8)...`);
     return pipeline('feature-extraction', this.model, { dtype: 'q8' });
   }
@@ -136,8 +156,9 @@ class MusicEmbeddingIndex {
         const record = JSON.parse(line);
         if (
           record.model === this.model &&
+          record.preprocessingVersion === PREPROCESSING_VERSION &&
           record.key &&
-          record.titleHash &&
+          record.inputHash &&
           Array.isArray(record.embedding)
         ) {
           this.vectorIndex.upsert(record);
@@ -156,14 +177,18 @@ class MusicEmbeddingIndex {
     const title = embeddingTitle(track);
     if (!title) return true;
     const record = this.vectorIndex.get(trackKey(track));
-    return record?.titleHash === titleHash(title, this.model);
+    return record?.inputHash === inputHash(this.#modelInput(title, 'passage'), this.model);
   }
 
-  async #embedTexts(texts) {
+  #modelInput(text, role) {
+    return `${this.isE5 ? `${role}: ` : ''}${text}`;
+  }
+
+  async #embedTexts(texts, role = 'query') {
     if (!this.extractorPromise) this.extractorPromise = this.createExtractor();
     const run = async () => {
       const extractor = await this.extractorPromise;
-      const modelInputs = texts.map((text) => `${this.inputPrefix}${text}`);
+      const modelInputs = texts.map((text) => this.#modelInput(text, role));
       const output = await extractor(modelInputs, { pooling: 'mean', normalize: true });
       const dimensions = output.dims.at(-1);
       if (!dimensions || output.data.length !== texts.length * dimensions) {
@@ -202,8 +227,8 @@ class MusicEmbeddingIndex {
         results[index] = new Float32Array();
         return;
       }
-      const hash = titleHash(title, this.model);
-      const stored = this.vectorIndex.getByTitleHash(hash)?.embedding;
+      const hash = inputHash(this.#modelInput(title, 'query'), this.model);
+      const stored = this.vectorIndex.getByInputHash(hash)?.embedding;
       const transient = this.transientEmbeddingCache.get(hash);
       if (stored || transient) {
         results[index] = stored || transient;
@@ -239,10 +264,12 @@ class MusicEmbeddingIndex {
 
   async #indexBatch(tracks) {
     const titles = tracks.map(embeddingTitle);
-    const vectors = await this.#embedTexts(titles);
+    const vectors = await this.#embedTexts(titles, 'passage');
     const records = tracks.map((track, index) => ({
       key: trackKey(track),
-      titleHash: titleHash(titles[index], this.model),
+      inputText: titles[index],
+      inputHash: inputHash(this.#modelInput(titles[index], 'passage'), this.model),
+      preprocessingVersion: PREPROCESSING_VERSION,
       model: this.model,
       embedding: Array.from(vectors[index])
     }));
@@ -310,11 +337,12 @@ class MusicEmbeddingIndex {
 
     const startedAt = performance.now();
     const [queryEmbedding] = await this.#embedTexts([query]);
-    const candidates = this.vectorIndex.search(queryEmbedding, limit);
+    const candidates = this.vectorIndex.search(queryEmbedding, this.vectorIndex.size);
     const tracksByKey = new Map(tracks.map((track) => [trackKey(track), track]));
     const hydrated = candidates
       .map((candidate) => ({ ...candidate, track: tracksByKey.get(candidate.key) }))
-      .filter((candidate) => candidate.track);
+      .filter((candidate) => candidate.track && this.#isCurrent(candidate.track))
+      .slice(0, limit);
     const best = hydrated[0] || null;
     const latency = performance.now() - startedAt;
     console.log(
@@ -334,5 +362,6 @@ module.exports = {
   dotProduct,
   embeddingTitle,
   normalizeVector,
-  trackKey
+  trackKey,
+  PREPROCESSING_VERSION
 };

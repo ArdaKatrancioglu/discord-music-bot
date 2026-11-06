@@ -1,3 +1,4 @@
+const { formatTrackName } = require('../utils/titleUtils');
 const { spawn } = require('child_process');
 const { ytDlpPath } = require('../core/binaries');
 const { getPlaylistTracks } = require('../core/playlist_scraper');
@@ -54,7 +55,7 @@ async function handlePlaylist(client, message, url) {
     const query = track.url;
 
     try {
-      await channel.send(`➕ Queue: **${track.title}**`);
+      await channel.send(`➕ Queue: **${formatTrackName(track)}**`);
       message.content = `!play ${query}`;
       client.emit('messageCreate', message);
     } catch (err) {

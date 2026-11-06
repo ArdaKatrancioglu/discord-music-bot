@@ -1,3 +1,4 @@
+const { formatTrackName } = require('../utils/titleUtils');
 const { findNextAutoplayTrack } = require('./autoplayRuntimeService');
 
 function clearAutoplayTimer(session) {
@@ -42,7 +43,7 @@ function scheduleAutoplayCheck(client, message, guildId, session) {
     try {
       if (session.lastChannel?.send) {
         await session.lastChannel.send(
-          `🤖 Autoplay preparing next track based on **${session.currentTrack.title}**...`
+          `🤖 Autoplay preparing next track based on **${formatTrackName(session.currentTrack)}**...`
         );
       }
 
@@ -57,8 +58,8 @@ function scheduleAutoplayCheck(client, message, guildId, session) {
 
       if (session.lastChannel?.send) {
         await session.lastChannel.send(
-          `✅ Autoplay selected based on **${next.referenceTrack.title}**:\n` +
-            `**${next.title}**\n` +
+          `✅ Autoplay selected based on **${formatTrackName(next.referenceTrack)}**:\n` +
+            `**${formatTrackName(next)}**\n` +
             `Source: ${next.source}\n` +
             `Score: ${next.score}\n` +
             `Recent similarity: ${next.maxRecentSimilarity?.toFixed(3) ?? 'n/a'} ` +

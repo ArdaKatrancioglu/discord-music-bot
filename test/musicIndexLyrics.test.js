@@ -6,6 +6,8 @@ const path = require('path');
 const { spawnSync } = require('child_process');
 
 const musicIndexModule = path.resolve(__dirname, '../src/core/musicIndex.js');
+const { normalizeTrack } = require('../src/core/libraryMigration');
+const { readLyrics } = require('../src/core/lyricsStore');
 const lyricsServiceModule = path.resolve(__dirname, '../src/services/lyricsService.js');
 
 test('updateTrackLyrics changes only the matching track lyrics field', () => {
@@ -51,6 +53,7 @@ test('updateTrackLyrics changes only the matching track lyrics field', () => {
   `;
   const child = spawnSync(process.execPath, ['-e', script], {
     cwd: tempDirectory,
+    env: { ...process.env, MUSIC_INDEX_PATH: path.join(downloadsDirectory, 'index.json') },
     encoding: 'utf8'
   });
 
@@ -60,16 +63,17 @@ test('updateTrackLyrics changes only the matching track lyrics field', () => {
       fs.readFileSync(path.join(downloadsDirectory, 'index.json'), 'utf8')
     );
     assert.deepEqual(updatedIndex.tracks[0], {
-      ...originalIndex.tracks[0],
-      lyrics: {
-        source: 'lrclib',
-        status: 'found',
-        syncedLyrics: [{ time: 12.34, text: 'First line' }]
-      },
+      ...normalizeTrack(originalIndex.tracks[0]),
+      lyrics: 'lyrics/track-1.ttml',
       lyricsOffset: 2
     });
-    assert.deepEqual(updatedIndex.tracks[1], originalIndex.tracks[1]);
-    assert.equal(updatedIndex.version, originalIndex.version);
+    assert.deepEqual(updatedIndex.tracks[1], normalizeTrack(originalIndex.tracks[1]));
+    assert.equal(
+      readLyrics(path.join(downloadsDirectory, 'index.json'), updatedIndex.tracks[0].lyrics)
+        .lines[0].timestamp,
+      12.34
+    );
+    assert.equal(updatedIndex.version, 2);
 
     const cacheReadScript = `
       const { enableLyrics, disableLyrics } = require(${JSON.stringify(lyricsServiceModule)});
@@ -117,6 +121,7 @@ test('updateTrackLyrics changes only the matching track lyrics field', () => {
     `;
     const cacheReadChild = spawnSync(process.execPath, ['-e', cacheReadScript], {
       cwd: tempDirectory,
+      env: { ...process.env, MUSIC_INDEX_PATH: path.join(downloadsDirectory, 'index.json') },
       encoding: 'utf8'
     });
     assert.equal(cacheReadChild.status, 0, cacheReadChild.stderr || cacheReadChild.stdout);

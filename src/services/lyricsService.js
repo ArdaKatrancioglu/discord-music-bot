@@ -4,7 +4,9 @@ const REQUEST_TIMEOUT_MS = 8000;
 const MAX_SLEEP_MS = 30000;
 const MIN_REQUEST_GAP_MS = 250;
 const LYRICS_SEARCH_VERSION = 2;
-const { getTrackFromCache, updateTrackLyrics } = require('../core/musicIndex');
+const { getTrackFromCache, updateTrackLyrics, indexPath } = require('../core/musicIndex');
+const { readLyrics } = require('../core/lyricsStore');
+const { parseLrc } = require('../core/ttml');
 
 const lyricsCache = new Map();
 // Detailed lyrics diagnostics stay disabled during normal operation.
@@ -79,14 +81,22 @@ function normalize(value) {
     .toLowerCase()
     .replace(/\([^)]*(official|audio|video|lyrics?|visuali[sz]er|hq|hd|4k)[^)]*\)/gi, ' ')
     .replace(/\[[^\]]*(official|audio|video|lyrics?|visuali[sz]er|hq|hd|4k)[^\]]*\]/gi, ' ')
-    .replace(/[^a-z0-9]+/g, ' ')
+    .replace(/[^\p{L}\p{N}]+/gu, ' ')
     .trim();
 }
 
 function parseTrackIdentity(track) {
   let title = String(track?.title || '').trim();
   const explicitArtist = String(track?.artist || '').trim();
-  let artist = String(explicitArtist || track?.uploader || '')
+  if (track?.videoTitle !== undefined && explicitArtist) {
+    return {
+      title,
+      artist: explicitArtist,
+      album: String(track?.album || '').trim(),
+      duration: Number(track?.duration) || null
+    };
+  }
+  let artist = String(explicitArtist)
     .replace(/\s+-\s+Topic$/i, '')
     .trim();
 
@@ -128,29 +138,6 @@ function parseTrackIdentity(track) {
     album: String(track?.album || '').trim(),
     duration: Number(track?.duration) || null
   };
-}
-
-function parseLrc(input) {
-  if (typeof input !== 'string') return [];
-
-  const lines = [];
-  for (const rawLine of input.split(/\r?\n/)) {
-    const timestamps = [...rawLine.matchAll(/\[(\d{1,3}):(\d{2}(?:\.\d{1,3})?)\]/g)];
-    if (!timestamps.length) continue;
-
-    const text = rawLine.replace(/\[(\d{1,3}):(\d{2}(?:\.\d{1,3})?)\]/g, '').trim();
-    if (!text) continue;
-
-    for (const match of timestamps) {
-      const minutes = Number(match[1]);
-      const seconds = Number(match[2]);
-      const timestamp = minutes * 60 + seconds;
-      if (!Number.isFinite(timestamp) || seconds >= 60) continue;
-      lines.push({ timestamp, text });
-    }
-  }
-
-  return lines.sort((a, b) => a.timestamp - b.timestamp);
 }
 
 function tokenSimilarity(left, right) {
@@ -229,9 +216,24 @@ function selectBestResult(results, identity) {
   if (!Array.isArray(results)) return null;
   return (
     results
-      .filter((result) => result && typeof result.syncedLyrics === 'string')
-      .filter((result) => result.syncedLyrics.trim())
-      .sort((a, b) => scoreResult(b, identity) - scoreResult(a, identity))[0] || null
+      .filter((result) => {
+        if (!result || (!result.syncedLyrics?.trim() && !result.plainLyrics?.trim())) return false;
+        if (tokenSimilarity(result.trackName, identity.title) < 0.65) return false;
+        if (identity.artist && tokenSimilarity(result.artistName, identity.artist) < 0.4)
+          return false;
+        // LRCLIB timing belongs to the playable recording, not necessarily its album counterpart.
+        const difference = getScoreDetails(result, identity).durationDifference;
+        if (difference !== null && difference > 8) return false;
+        const lines = parseLrc(result.syncedLyrics);
+        if (identity.duration && lines.some((line) => line.timestamp > identity.duration + 1))
+          return false;
+        return true;
+      })
+      .sort(
+        (a, b) =>
+          scoreResult(b, identity) - scoreResult(a, identity) ||
+          Number(Boolean(b.syncedLyrics?.trim())) - Number(Boolean(a.syncedLyrics?.trim()))
+      )[0] || null
   );
 }
 
@@ -245,68 +247,20 @@ function cacheKey(identity) {
 
 function readPersistentLyrics(track) {
   const libraryTrack = getTrackFromCache({ id: track?.id, titleSan: track?.titleSan });
-  const cached = libraryTrack?.lyrics;
-
-  if (!cached) return { hit: false, libraryTrack };
-
-  if (cached.status === 'not_found') {
-    if (cached.searchVersion !== LYRICS_SEARCH_VERSION) {
-      console.info('[Lyrics Cache] Ignoring stale not_found result.', {
-        track: trackLabel(track),
-        cachedSearchVersion: cached.searchVersion ?? null,
-        currentSearchVersion: LYRICS_SEARCH_VERSION
-      });
-      return { hit: false, libraryTrack };
-    }
-    debugLog(`[Lyrics Cache] Persistent not_found hit for track ${libraryTrack.id}.`);
-    return { hit: true, lines: null, libraryTrack };
-  }
-
-  if (cached.status === 'found' && Array.isArray(cached.syncedLyrics)) {
-    const lines = cached.syncedLyrics
-      .filter((line) => Number.isFinite(Number(line?.time)) && typeof line?.text === 'string')
-      .map((line) => ({ timestamp: Number(line.time), text: line.text }))
-      .sort((a, b) => a.timestamp - b.timestamp);
-
-    if (lines.length) {
-      debugLog(
-        `[Lyrics Cache] Persistent found hit for track ${libraryTrack.id}: ${lines.length} line(s).`
-      );
-      return { hit: true, lines, libraryTrack };
-    }
-  }
-
-  console.warn(`[Lyrics Cache] Invalid lyrics cache for track ${libraryTrack.id}; refreshing it.`);
+  const parsed = readLyrics(indexPath, libraryTrack?.lyrics);
+  if (parsed) return { hit: true, lines: parsed.lines.length ? parsed.lines : null, libraryTrack };
+  if (libraryTrack?.lyrics) updateTrackLyrics(libraryTrack.id, null);
   return { hit: false, libraryTrack };
 }
 
-function writePersistentLyrics(libraryTrack, lines) {
-  if (!libraryTrack?.id) {
-    console.warn('[Lyrics Cache] No matching library record; persistent cache write skipped.');
-    return;
-  }
-
-  let lyrics;
-  if (lines) {
-    lyrics = {
-      source: 'lrclib',
-      status: 'found',
-      syncedLyrics: lines.map((line) => ({ time: line.timestamp, text: line.text }))
-    };
-  } else {
-    lyrics = {
-      source: 'lrclib',
-      status: 'not_found',
-      searchVersion: LYRICS_SEARCH_VERSION
-    };
-  }
-
-  updateTrackLyrics(libraryTrack.id, lyrics);
+function writePersistentLyrics(libraryTrack, result) {
+  if (libraryTrack?.id && result) updateTrackLyrics(libraryTrack.id, result);
 }
 
 async function fetchSyncedLyrics(track, signal) {
-  const identity = parseTrackIdentity(track);
-  const key = cacheKey(identity);
+  const persistent = readPersistentLyrics(track);
+  const identity = parseTrackIdentity(persistent.libraryTrack || track);
+  const key = `${track?.id || ''}|${cacheKey(identity)}`;
   const attempts = [];
   debugLog('[Lyrics] Track metadata resolved for search:', {
     sourceTrack: trackLabel(track),
@@ -319,43 +273,11 @@ async function fetchSyncedLyrics(track, signal) {
     cacheKey: key
   });
 
-  const persistent = readPersistentLyrics(track);
-  if (persistent.hit) {
-    if (!persistent.lines) {
-      console.warn(
-        '[Lyrics Diagnostics] Skipping LRCLIB because a current not_found cache exists.',
-        {
-          sourceTrack: trackLabel(track),
-          parsedIdentity: identity,
-          cacheKey: key,
-          searchVersion: LYRICS_SEARCH_VERSION,
-          cacheLayer: 'downloadedMusic/index.json'
-        }
-      );
-    }
-    lyricsCache.set(key, persistent.lines);
-    return persistent.lines;
-  }
-
-  if (lyricsCache.has(key)) {
-    const cached = lyricsCache.get(key);
-    if (!cached) {
-      console.warn(
-        '[Lyrics Diagnostics] Skipping LRCLIB because an in-memory not_found cache exists.',
-        {
-          sourceTrack: trackLabel(track),
-          parsedIdentity: identity,
-          cacheKey: key,
-          searchVersion: LYRICS_SEARCH_VERSION,
-          cacheLayer: 'memory'
-        }
-      );
-    }
-    debugLog(
-      `[Lyrics] Cache hit: ${cached ? `${cached.length} parsed line(s)` : 'no synced lyrics'}`
-    );
-    return cached;
-  }
+  if (persistent.hit) return persistent.lines;
+  const cached = lyricsCache.get(key);
+  // Missing/corrupt local files must refetch even after an earlier successful lookup.
+  if (!persistent.libraryTrack && cached && Date.now() - cached.at < 60000) return cached.lines;
+  if (cached && !cached.lines && Date.now() - cached.at < 15000) return null;
 
   const search = async (searchIdentity, label) => {
     const url = new URL(LRCLIB_SEARCH_URL);
@@ -486,8 +408,8 @@ async function fetchSyncedLyrics(track, signal) {
   }
 
   const result = lines.length ? lines : null;
-  lyricsCache.set(key, result);
-  writePersistentLyrics(persistent.libraryTrack, result);
+  lyricsCache.set(key, { lines: result, at: Date.now() });
+  writePersistentLyrics(persistent.libraryTrack, match);
   debugLog(`[Lyrics] Cached search result: ${result ? `${result.length} line(s)` : 'not found'}.`);
   return result;
 }
@@ -620,6 +542,18 @@ async function runLyricsWorker(session, track, playbackGeneration, lyricsGenerat
     return;
   }
   if (!lines) {
+    const local = getTrackFromCache({ id: track?.id, titleSan: track?.titleSan });
+    const plain = readLyrics(indexPath, local?.lyrics);
+    if (plain?.plainLyrics && !plain.lines.length) {
+      session.lyricsStatus = 'plain';
+      session.lyricsPlainText = plain.plainLyrics;
+      session.lyricsLines = null;
+      session.lyricsInteraction = null;
+      await require('./playerUiService').requestPlayerUpdate(session, {
+        expectedPlaybackGeneration: playbackGeneration
+      });
+      return;
+    }
     console.warn(`[Lyrics] Giving up for ${trackLabel(track)}: no synchronized lyrics available.`);
     session.lyricsEnabled = false;
     session.lyricsStatus = 'unavailable';
@@ -678,6 +612,7 @@ function startLyricsWorker(session) {
   const lyricsGeneration = session.lyricsGeneration;
   const controller = new AbortController();
   session.lyricsStatus = 'loading';
+  session.lyricsPlainText = null;
   session.lyricsLines = null;
   session.currentLyricIndex = -1;
   debugLog('[Lyrics] Starting worker.', {
@@ -732,6 +667,7 @@ module.exports = {
   findActiveLineIndex,
   getLyricsPosition,
   getPlaybackPosition,
+  fetchSyncedLyrics,
   parseLrc,
   parseTrackIdentity,
   selectBestResult,

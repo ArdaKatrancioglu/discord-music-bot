@@ -1,3 +1,4 @@
+const { formatTrackName } = require('../../utils/titleUtils');
 const { sessions } = require('../../core/sessionManager');
 const { resolveGuildIdForBoundAwareCommand } = require('../../services/messageContextService');
 
@@ -14,8 +15,8 @@ module.exports = {
       return message.reply('ℹ️ Queue is empty.');
     }
 
-    const now = session.currentTrack ? `Now: **${session.currentTrack.title}**\n` : '';
-    const list = session.queue.map((t, i) => `${i + 1}. ${t.title}`).join('\n');
+    const now = session.currentTrack ? `Now: **${formatTrackName(session.currentTrack)}**\n` : '';
+    const list = session.queue.map((t, i) => `${i + 1}. ${formatTrackName(t)}`).join('\n');
 
     return message.reply(`🎶 ${now}Queue:\n${list || '(empty)'}`);
   }

@@ -53,7 +53,15 @@ function findHighConfidenceTextMatch(query, tracks) {
 
   const candidates = tracks
     .map((track) => {
-      const titleWords = comparableWords(track.displayTitle || track.title || track.titleSan);
+      const titleOnly = comparableWords(
+        track.title || track.videoTitle || track.displayTitle || track.titleSan
+      ).join(' ');
+      const artistOnly = comparableWords(track.artist).join(' ');
+      if (queryText === titleOnly || (artistOnly && queryText === artistOnly))
+        return { track, score: 1 };
+      const titleWords = comparableWords(
+        `${track.title || track.videoTitle || track.displayTitle || track.titleSan || ''} ${track.artist || ''}`
+      );
       const titleText = titleWords.join(' ');
       if (titleText === queryText) return { track, score: 1 };
 
@@ -83,7 +91,7 @@ function selectSemanticCacheMatch(
 
   const queryWords = new Set(comparableWords(query));
   const titleWords = comparableWords(
-    best.track?.displayTitle || best.track?.title || best.track?.titleSan
+    `${best.track?.title || best.track?.videoTitle || best.track?.displayTitle || best.track?.titleSan || ''} ${best.track?.artist || ''}`
   );
   const hasTokenOverlap = titleWords.some((word) => queryWords.has(word));
   const secondScore = candidates[1]?.score ?? -1;

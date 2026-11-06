@@ -240,3 +240,169 @@ Permission is hereby granted, free of charge, to any person obtaining a copy of 
 - All copyright notices and this permission notice shall be included in all copies.
 
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+
+## Music library v2
+
+Playback and downloads continue to use the original YouTube recording and existing audio
+paths. YouTube Music metadata is resolved through `youtubei.js`; no Python service or
+additional music metadata provider is used. The existing Spotify playlist importer and
+Last.fm recommendation feature are unchanged.
+
+The index remains at `downloadedMusic/index.json` by default. Set `MUSIC_INDEX_PATH`
+to use another index; lyrics and embedding storage are placed beside that index.
+The document contains `{ "version": 2, "tracks": [...] }`, retaining other existing
+application fields. A track has this shape (values are illustrative):
+
+```json
+{
+  "id": "bpOSxM0rNPM",
+  "title": "Do I Wanna Know?",
+  "artist": "Arctic Monkeys",
+  "artists": [{ "id": "artist-channel-id", "name": "Arctic Monkeys" }],
+  "album": "AM",
+  "year": 2013,
+  "videoTitle": "Arctic Monkeys - Do I Wanna Know? (Official Video)",
+  "titleSan": "Arctic_Monkeys_-_Do_I_Wanna_Know_(Official_Video)",
+  "filePath": "/existing/path/to/audio.webm",
+  "url": "https://www.youtube.com/watch?v=bpOSxM0rNPM",
+  "duration": 266,
+  "artworkUrl": null,
+  "musicId": "pqrUQrAcfo4",
+  "metadataSource": "youtube-music",
+  "lyrics": "lyrics/bpOSxM0rNPM.ttml",
+  "lyricsOffset": 0
+}
+```
+
+Unknown scalar metadata uses `null`. `artists` and `metadataSource` are optional and
+added on a successful resolution. Existing application fields such as `thumbnail`
+and `lyricsOffset` are retained. For unrecognized recordings, `title` retains the
+original fallback title and `artist`/`album` remain empty; it is not a verified song
+identity. Legacy filename-only records cannot recover punctuation or an exact video
+title that was never saved. Existing malformed legacy IDs are preserved rather than
+silently changing their identities; the filename parser now correctly reads exactly
+11 ID characters for new records.
+
+### Migration
+
+Stop the bot before running a migration: the bot and migration must not write the same
+index concurrently. Install dependencies with `npm ci`, then run:
+
+```sh
+# Inspect the offline schema/lyrics conversion without changing files.
+npm run migrate:library -- --dry-run --offline
+
+# Convert storage and enrich up to 20 unresolved tracks per run.
+npm run migrate:library -- --batch-size 20
+
+# Repeat to continue; resolved tracks and valid TTML files are retained.
+npm run migrate:library -- --batch-size 20
+
+# Rebuild changed/missing vectors; unchanged inputs are reused.
+npm run backfill:embeddings
+```
+
+Options: `--index /path/to/index.json`, `--dry-run`, `--offline`,
+`--batch-size N`, `--offset N` (zero-based track position), and
+`--overwrite-metadata` (explicitly replace existing artist/title corrections).
+Dry runs can perform lookups unless `--offline` is supplied, but write no files.
+Network failures leave entries usable and retryable. Confirmed negative matches are
+cached for one day; successful metadata for 30 days in `youtube-music-cache.json`.
+Metadata lookups are serialized with a minimum gap and at most one retry. Optional
+song searches require a directly verified identity, the same title/version and artist
+set, and a duration within eight seconds. Unrelated watch-playlist recommendations
+are never used. A linked counterpart can supply the song identity without changing
+which recording plays. Release years come from music/album metadata, not upload dates.
+
+Before any index conversion, a sibling `index.json.backup-<timestamp>-<uuid>` file
+preserves the source. TTML and JSON use temporary files, fsync, and atomic renames.
+Each migrated track is checkpointed, so interrupted runs resume without reconverting
+successful entries. Restore a backup only while the bot is stopped; keep the `lyrics`
+directory with the corresponding index. Backups contain embedded lyrics when the
+source had them. No audio file is renamed, removed, or downloaded by migration.
+Normal startup also performs the backed-up offline conversion for legacy indexes;
+run the CLI to add network metadata. Corrupt indexes fail visibly instead of being
+overwritten with an empty library.
+
+### Lyrics and search
+
+`lyrics` is only a portable `lyrics/<permanent-id>.ttml` path or `null`; no persistent
+found/not-found flag remains. Existing source timestamps and offsets survive migration.
+TTML uses the W3C namespace, standard timing attributes, Unicode/XML escaping,
+line ends from the next distinct timestamp or available recording duration, and
+untimed paragraphs for plain lyrics. Real structured word times can be stored as
+spans; line-only LRCLIB results never receive invented word times. The parser supports
+this generated TTML subset, not arbitrary TTML styling or parent-relative timing.
+
+Lyrics consumers parse local TTML to runtime arrays. Missing or corrupt files trigger
+a new LRCLIB lookup with clean title, artist, album and playable duration. Plain lyrics
+are shown without synchronized highlighting. Failed lookups are cached only briefly
+in memory, allowing later retries. New candidates with a duration difference over eight
+seconds, unrelated title/artist, or timestamps beyond the playable recording are
+rejected. Duration agreement cannot detect equal-length edits or guarantee alignment;
+no automatic timing shift is applied, and the existing offset controls remain available.
+
+Embeddings use `Xenova/multilingual-e5-small`, mean pooling and unit normalization.
+Recognized tracks use `<title> <artist>` (for example, `Do I Wanna Know? Arctic Monkeys`); unresolved videos use their fallback
+title. Retrieval uses `passage:` for tracks and `query:` for queries, following the
+[model's retrieval conventions](https://huggingface.co/intfloat/multilingual-e5-small).
+The actual model input, model name, and preprocessing version determine `inputHash`.
+Old `titleHash` records and stale vectors are ignored; changed tracks regenerate on
+backfill/startup. Exact normalized title/artist matches take priority over semantic
+scores. The append-only embedding file may retain ignored historical records.
+
+`npm test` runs deterministic mocked API, storage, migration, embedding, and playback
+regressions against temporary libraries, without modifying local downloaded music.
+
+### Docker: prepare an existing server library
+
+Keep the server's existing `downloadedMusic` directory, including its index, audio,
+lyrics and caches. Deploy the updated source code and install the server's `.env` and
+`cookies.txt` beside `docker-compose.yml`. These credentials are excluded from the image.
+If you do not use cookies, create an empty `cookies.txt` before running Compose.
+
+Run from that directory on the server:
+
+```sh
+docker compose stop discord-bot
+docker compose build discord-bot
+
+# Optional preview; no metadata network requests and no file changes.
+docker compose run --rm --no-deps discord-bot npm run prepare:library -- --dry-run --offline --relocate-audio
+
+# Process the full index (including a 550-entry library), then rebuild embeddings.
+docker compose run --rm --no-deps discord-bot npm run prepare:library -- --relocate-audio
+
+docker compose up -d
+docker compose logs -f discord-bot
+```
+
+`prepare:library` performs migration, YouTube Music enrichment and embedding backfill
+in that order. There is no default track limit. It uses the same backup, request
+throttling and checkpoint behavior as `migrate:library`. Rerun the command after an
+interruption; it reuses completed metadata and vectors. Recognized metadata corrections
+are preserved unless `--overwrite-metadata` is explicitly supplied. Non-music videos
+and unrecognized songs keep their fallback titles and remain in the library.
+
+`--relocate-audio` is for changing machines or entering Docker: if an old absolute audio
+path is missing, it looks for the same filename beside `index.json`, or a single audio
+file with the same video ID. Only an existing file can replace the old path. No audio
+is downloaded or renamed. The old path is retained in the index backup. If audio is
+still missing, preparation reports a nonzero exit code after saving completed work.
+
+To limit one run to 50 unresolved metadata lookups, add `--batch-size 50`. To start at
+another position, add `--offset 50` (zero-based). A full preparation without these flags
+is simplest for an established library. It can take several minutes depending on
+YouTube responses; unsuccessful recognition does not imply the video is a song.
+
+The model is downloaded on first use and retained in the `embedding-models` Docker
+volume, controlled by `EMBEDDING_CACHE_DIR`. The index, TTML files and vectors remain in
+the host's mounted `downloadedMusic` folder. Compose `up` starts the bot; run the
+preparation command beforehand when enriching an existing server library.
+
+Embedding preprocessing version 3 uses the text `Do I Wanna Know? Arctic Monkeys`.
+The E5 model receives its internal `passage:` prefix for library vectors and `query:`
+for searches. `embeddings.jsonl` now stores `inputText` so each track's source text is
+inspectable. The version change invalidates older vectors once. Discord's player,
+queue, loop previews and notifications display **Do I Wanna Know? – Arctic Monkeys** when
+artist metadata exists; videos without artist metadata display their original title.

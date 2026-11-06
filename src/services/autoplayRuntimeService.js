@@ -92,6 +92,7 @@ async function findNextAutoplayTrack(session) {
     return {
       url,
       title: selected.track.title,
+      artist: selected.track.artist || null,
       source: selected.source,
       score: selected.score,
       maxRecentSimilarity: selected.maxRecentSimilarity,

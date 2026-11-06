@@ -4,7 +4,7 @@ services:
     container_name: bgutil-pot
     restart: unless-stopped
     ports:
-      - "4416:4416"
+      - '4416:4416'
 
   discord-bot:
     build: .
@@ -13,11 +13,16 @@ services:
     depends_on:
       - bgutil-pot
     environment:
-      BGUTIL_BASE_URL: "http://bgutil-pot:4416"
-      USE_COOKIES: "${USE_COOKIES:-false}"
-      USE_ARIA2C_FOR_VIDEO_FALLBACK: "false"
+      BGUTIL_BASE_URL: 'http://bgutil-pot:4416'
+      USE_COOKIES: '${USE_COOKIES:-false}'
+      USE_ARIA2C_FOR_VIDEO_FALLBACK: 'false'
+      EMBEDDING_CACHE_DIR: '/app/model-cache'
     env_file:
       - .env
     volumes:
       - ./downloadedMusic:/app/downloadedMusic
       - ./cookies.txt:/app/cookies.txt:rw
+      - embedding-models:/app/model-cache
+
+volumes:
+  embedding-models:

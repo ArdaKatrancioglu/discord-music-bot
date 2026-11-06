@@ -1,3 +1,4 @@
+const { formatTrackName } = require('../utils/titleUtils');
 const { execFile } = require('child_process');
 const https = require('https');
 const { sessions } = require('../core/sessionManager');
@@ -146,6 +147,15 @@ function cleanTrackTitleForLastFm(title) {
 }
 
 function guessArtistTrack(metadata) {
+  if (metadata.videoTitle !== undefined && metadata.artist && metadata.title) {
+    return {
+      artist: metadata.artist,
+      track: metadata.title,
+      rawTrack: metadata.title,
+      source: 'library music metadata',
+      confidence: 100
+    };
+  }
   const directArtist = metadata.artist || metadata.creator;
   const directTrack = metadata.track || metadata.alt_title;
 
@@ -554,7 +564,9 @@ function filterRecentHistoryCandidates(candidates, historyTracks = []) {
 }
 
 function autoplayTitle(track) {
-  return String(track?.displayTitle || track?.title || '').trim();
+  return track?.artist
+    ? require('../core/musicEmbeddingIndex').embeddingTitle(track)
+    : String(track?.title || track?.displayTitle || '').trim();
 }
 
 async function applyEmbeddingDiversity(
@@ -758,7 +770,9 @@ async function handleAutoplayCommand(client, message) {
     return message.reply('⚠️ Current track has no YouTube URL, autoplay cannot inspect it.');
   }
 
-  await message.reply(`🔎 Finding autoplay candidate for **${session.currentTrack.title}**...`);
+  await message.reply(
+    `🔎 Finding autoplay candidate for **${formatTrackName(session.currentTrack)}**...`
+  );
 
   const historyUrls = [
     ...(session.queue || []).map((t) => t.url).filter(Boolean),
@@ -784,7 +798,7 @@ async function handleAutoplayCommand(client, message) {
   const url = selected.track.webpage_url || selected.track.url;
 
   await message.reply(
-    `✅ Autoplay selected:\n**${selected.track.title}**\nSource: ${selected.source}\nScore: ${selected.score}\n🔗 ${url}`
+    `✅ Autoplay selected:\n**${formatTrackName(selected.track)}**\nSource: ${selected.source}\nScore: ${selected.score}\n🔗 ${url}`
   );
 
   message.content = `p ${url}`;

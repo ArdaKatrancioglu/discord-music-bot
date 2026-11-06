@@ -1,3 +1,4 @@
+const { formatTrackName } = require('../../utils/titleUtils');
 const { sessions } = require('../../core/sessionManager');
 const { resolveGuildIdForBoundAwareCommand } = require('../../services/messageContextService');
 const { requestPlayerUpdate } = require('../../services/playerUiService');
@@ -49,11 +50,11 @@ module.exports = {
     for (let i = 0; i < previewTracks.length; i++) {
       const t = previewTracks[i];
       await message.reply(
-        `${i === 0 ? '▶️' : '🔁'} ${i + 1}. **${t.title}**\n🔗 ${t.url || 'URL unknown'}`
+        `${i === 0 ? '▶️' : '🔁'} ${i + 1}. **${formatTrackName(t)}**\n🔗 ${t.url || 'URL unknown'}`
       );
     }
     if (remainingTracks.length > 0) {
-      const rest = remainingTracks.map((t, i) => `${i + 6}. ${t.title}`).join('\n');
+      const rest = remainingTracks.map((t, i) => `${i + 6}. ${formatTrackName(t)}`).join('\n');
       await message.reply(`And ${remainingTracks.length} more track(s):\n${rest}`);
     }
   }
