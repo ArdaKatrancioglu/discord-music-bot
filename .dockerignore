@@ -3,6 +3,7 @@ npm-debug.log
 .git
 .gitignore
 downloadedMusic
+data
 .DS_Store
 .env.local
 .env

@@ -5,6 +5,7 @@ const { atomicWrite, backupFile } = require('./atomicFile');
 const { createTtml, parseTtml } = require('./ttml');
 const { readLyrics, writeLyrics } = require('./lyricsStore');
 const { applyMusicMetadata } = require('./youtubeMusicMetadata');
+const { libraryMusicDirectory, MEDIA_FILE_PATTERN } = require('./libraryPaths');
 
 function normalizeTrack(track) {
   const videoTitle = track.videoTitle ?? track.displayTitle ?? track.title ?? '';
@@ -43,22 +44,29 @@ function audioExists(filePath) {
 
 function relocatedAudioPath(indexPath, track) {
   if (audioExists(track.filePath)) return track.filePath;
-  const directory = path.dirname(indexPath);
+  const directories = [libraryMusicDirectory(indexPath), path.dirname(indexPath)];
   if (typeof track.filePath === 'string') {
     const filename = path.posix.basename(track.filePath.replace(/\\/g, '/'));
-    const candidate = path.join(directory, filename);
-    if (audioExists(candidate)) return candidate;
+    for (const directory of directories) {
+      const candidate = path.join(directory, filename);
+      if (audioExists(candidate)) return candidate;
+    }
   }
-  const matches = fs
-    .readdirSync(directory)
-    .filter(
-      (filename) =>
-        /\.(mp3|m4a|webm)$/i.test(filename) &&
-        track.id &&
-        parseCachedMp3Filename(filename).id === track.id &&
-        audioExists(path.join(directory, filename))
-    );
-  return matches.length === 1 ? path.join(directory, matches[0]) : track.filePath;
+  const matches = directories.flatMap((directory) =>
+    fs.existsSync(directory)
+      ? fs
+        .readdirSync(directory)
+        .filter(
+          (filename) =>
+            MEDIA_FILE_PATTERN.test(filename) &&
+              track.id &&
+              parseCachedMp3Filename(filename).id === track.id &&
+              audioExists(path.join(directory, filename))
+        )
+        .map((filename) => path.join(directory, filename))
+      : []
+  );
+  return matches.length === 1 ? matches[0] : track.filePath;
 }
 
 async function migrateLibrary({

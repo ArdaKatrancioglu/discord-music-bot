@@ -1,25 +1,28 @@
 const routes = require('./registry');
 
-const BLACKLIST = new Set(['612376795462762510']);
+const { latencyMonitor } = require('../services/latencyService');
 
 async function handleMessage(client, message) {
+  const startedAt = latencyMonitor.now();
+  let finishMeasurement;
   try {
     if (message.author.bot) return;
     const content = message.content.trim();
 
-    // if (BLACKLIST.has(message.author.id)) {
-    //   return message.reply('yarrami ye tms');
-    // }
-
     const route = routes.find((r) => r.matches(content));
     if (!route) return;
 
+    finishMeasurement = latencyMonitor.measureCommand(message, ['reply'], startedAt);
     await route.handler.execute({ client, message, content });
   } catch (err) {
     console.error('[messageCreate] Handler error:', err);
     try {
       await message.reply('⚠️ An unexpected error occurred. What have you done?');
-    } catch {}
+    } catch {
+      // An unavailable text channel must not break command cleanup.
+    }
+  } finally {
+    finishMeasurement?.();
   }
 }
 

@@ -1,6 +1,7 @@
 const path = require('path');
 const { migrateLibrary } = require('../src/core/libraryMigration');
 const { YouTubeMusicResolver } = require('../src/core/youtubeMusicMetadata');
+const { libraryDataFile, resolveIndexPath } = require('../src/core/libraryPaths');
 
 function argumentsFor(argv) {
   const options = { dryRun: false, offline: false, overwrite: false };
@@ -20,9 +21,7 @@ function argumentsFor(argv) {
     if (!Number.isInteger(options[name]) || options[name] < (name === 'batchSize' ? 1 : 0))
       throw new Error(`Invalid ${name}`);
   }
-  options.indexPath = path.resolve(
-    options.indexPath || process.env.MUSIC_INDEX_PATH || 'downloadedMusic/index.json'
-  );
+  options.indexPath = path.resolve(options.indexPath || resolveIndexPath());
   return options;
 }
 
@@ -32,7 +31,7 @@ async function runMigration(options) {
       // Dry runs must not create even a metadata cache on disk.
       cachePath: options.dryRun
         ? undefined
-        : path.join(path.dirname(options.indexPath), 'youtube-music-cache.json')
+        : libraryDataFile(options.indexPath, 'youtube-music-cache.json')
     });
   let lastLog = 0;
   const result = await migrateLibrary({
@@ -48,7 +47,7 @@ async function runMigration(options) {
   console.log(`[Migration] Library version: ${index.version}`);
   console.log(JSON.stringify({ dryRun: options.dryRun, ...report }, null, 2));
   console.log(
-    'Embedding hashes are checked against current metadata; run npm run backfill:embeddings to rebuild now.'
+    'Run npm run rebuild:search to refresh the lexical index, or use prepare:library to do both.'
   );
   return result;
 }

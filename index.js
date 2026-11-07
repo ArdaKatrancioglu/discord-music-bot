@@ -5,10 +5,14 @@ const { generateDependencyReport } = require('@discordjs/voice');
 const { Client, GatewayIntentBits, Partials } = require('discord.js');
 
 const { handleMessage } = require('./src/commands/commandHandler');
-const { handlePlayerInteraction } = require('./src/services/playerUiService');
+const {
+  PLAYER_CUSTOM_ID_PREFIX,
+  handlePlayerInteraction
+} = require('./src/services/playerUiService');
 const { destroyAllConnections, disconnectIfChannelEmpty } = require('./src/core/sessionManager');
 const { listAllCachedTracksUnique } = require('./src/core/musicIndex');
-const { startEmbeddingBackfill } = require('./src/services/cacheSearchService');
+const { initializeCachedSearch, closeCachedSearch } = require('./src/services/cacheSearchService');
+const { latencyMonitor } = require('./src/services/latencyService');
 const { exec } = require('child_process');
 
 const TOKEN = process.env.TOKEN;
@@ -34,12 +38,16 @@ function stopBgutilContainer() {
 
 process.on('SIGINT', () => {
   console.log('\n[Shutdown] Caught SIGINT (Ctrl+C)');
+  latencyMonitor.stop();
+  closeCachedSearch();
   stopBgutilContainer();
   process.exit(0);
 });
 
 process.on('SIGTERM', () => {
   console.log('[Shutdown] SIGTERM received');
+  latencyMonitor.stop();
+  closeCachedSearch();
   stopBgutilContainer();
   process.exit(0);
 });
@@ -56,6 +64,8 @@ const client = new Client({
   partials: [Partials.Channel]
 });
 
+latencyMonitor.start(client);
+
 client.once('ready', () => {
   console.log(`[Ready] Logged in as ${client.user.tag}`);
   console.log(generateDependencyReport());
@@ -67,10 +77,19 @@ client.on('messageCreate', (message) => {
 });
 
 client.on('interactionCreate', async (interaction) => {
+  if (!interaction.isButton() || !interaction.customId.startsWith(PLAYER_CUSTOM_ID_PREFIX)) return;
+  const finishMeasurement = latencyMonitor.measureCommand(interaction, [
+    'reply',
+    'deferReply',
+    'deferUpdate',
+    'update'
+  ]);
   try {
     await handlePlayerInteraction(interaction);
   } catch (error) {
     console.error('[Player UI] Interaction failed:', error);
+  } finally {
+    finishMeasurement();
   }
 });
 
@@ -95,8 +114,8 @@ process.on('SIGTERM', () => {
 // Başlat
 (async () => {
   await sodium.ready; // AEAD/XChaCha20 hazır olsun
-  startEmbeddingBackfill(listAllCachedTracksUnique()).catch((error) => {
-    console.warn('[Embeddings] Startup backfill will be retried next launch:', error.message);
+  initializeCachedSearch(listAllCachedTracksUnique()).catch((error) => {
+    console.warn('[Lexical Search] Startup indexing failed:', error.message);
   });
   client.login(TOKEN);
 })();

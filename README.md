@@ -14,10 +14,10 @@ It allows users to play, queue, pause, skip, and cache YouTube audio directly in
   (`!play <song name or YouTube URL>`)
 
 - **Smart cache system**
-  - Downloads and stores tracks as `.mp3` in the `downloadedMusic/` folder
+  - Downloads and stores media in `data/music/`
   - Replays cached songs instantly without re-downloading
   - Filenames automatically include both the **video ID** and **song title**
-  - Searches cached titles with multilingual semantic embeddings before falling back to YouTube
+  - Searches cached title/artist fields with SQLite FTS5 and RapidFuzz before falling back to YouTube
 
 - **Measured YouTube recovery pipeline**
   - Metadata tries without cookies first, then retries with `cookies.txt`
@@ -59,7 +59,7 @@ It allows users to play, queue, pause, skip, and cache YouTube audio directly in
 
 Ensure you have the following installed:
 
-- Node.js (v18 or later)
+- Node.js (v22.13 or later)
 - ffmpeg
 - yt-dlp
 - A Discord bot token
@@ -129,10 +129,15 @@ The project directory structure should be:
 
 ```
 project/
-├── downloadedMusic/                  # Auto-created: downloaded MP3s + persistent index
-│   ├── index.json                    # Cached track metadata (id, title, filename, etc.)
-│   ├── embeddings.jsonl              # Restart-safe normalized title embeddings
-│   └── <id>_<sanitized>.mp3          # Downloaded audio files
+├── data/                            # Persistent bot data (Docker bind mount)
+│   ├── index.json                   # Track metadata and file references
+│   ├── music/                       # Audio/video media and resumable downloads
+│   ├── lyrics/                      # Per-track TTML lyrics
+│   ├── cache/
+│   │   ├── search.sqlite            # Rebuildable SQLite FTS5 search index
+│   │   └── youtube-music-cache.json # YouTube Music lookup cache
+│   └── stats/
+│       └── analytics.json           # Persistent request/playback statistics
 │
 ├── src/
 │   ├── commands/
@@ -188,20 +193,18 @@ project/
 ### Performance
 
 - Uses parallel downloaders (**`aria2c`** if available).
-- Runtime analytics are stored in `downloadedMusic/analytics.json`, which persists through the
+- Runtime analytics are stored in `data/stats/analytics.json`, which persists through the
   Docker volume. It records success/failure counts, timings, error classifications, fallback
   usage, downloaded bytes, cache hits, and tracks started/completed/skipped/stopped.
 - Utilizes **in-memory caching** for fast responses.
-- Uses the quantized multilingual E5-small retrieval model, loaded once per process. Existing tracks are
-  backfilled automatically at startup; `npm run backfill:embeddings` can run the migration manually.
-- `CACHE_SEMANTIC_THRESHOLD` (default `0.84`) and `CACHE_EMBEDDING_BATCH_SIZE` (default `8`)
-  can be adjusted through the environment.
-- Semantic cache candidates without any shared title/query token use the stricter
-  `CACHE_SEMANTIC_NO_OVERLAP_THRESHOLD` (default `0.90`) and must beat the second candidate by
-  `CACHE_SEMANTIC_NO_OVERLAP_MIN_MARGIN` (default `0.05`).
-- Autoplay never restores exact matches from its five-track recent history. It also rejects title
-  similarity at or above `AUTOPLAY_SEMANTIC_REJECT_THRESHOLD` (default `0.93`) and gradually
-  penalizes similarity starting at `AUTOPLAY_SEMANTIC_PENALTY_START` (default `0.83`).
+- Uses local SQLite FTS5 BM25 and character trigram retrieval, followed by field-aware
+  RapidFuzz scoring. Search synchronizes metadata updates and removals automatically.
+- `npm run rebuild:search` rebuilds the derived `data/cache/search.sqlite` index and cleans obsolete files.
+- Autoplay excludes exact recent-history matches and uses lexical similarity for diversity.
+  `AUTOPLAY_LEXICAL_REJECT_THRESHOLD` (default `0.93`) and
+  `AUTOPLAY_LEXICAL_PENALTY_START` (default `0.83`) control its existing diversity behavior.
+- `!stats` includes in-memory latency metrics for the previous 180 seconds. Existing
+  persistent request/playback analytics remain separate.
 
 ## Legal Notice
 
@@ -248,8 +251,10 @@ paths. YouTube Music metadata is resolved through `youtubei.js`; no Python servi
 additional music metadata provider is used. The existing Spotify playlist importer and
 Last.fm recommendation feature are unchanged.
 
-The index remains at `downloadedMusic/index.json` by default. Set `MUSIC_INDEX_PATH`
-to use another index; lyrics and embedding storage are placed beside that index.
+The index is stored at `data/index.json` by default. `BOT_DATA_DIR` changes the data
+root, and `MUSIC_INDEX_PATH` can override the index file. Media is stored in the
+sibling `music/` directory, TTML in `lyrics/`, derived data in `cache/`, and persistent
+analytics in `stats/`. Docker mounts `./data` at `/app/data`.
 The document contains `{ "version": 2, "tracks": [...] }`, retaining other existing
 application fields. A track has this shape (values are illustrative):
 
@@ -298,8 +303,8 @@ npm run migrate:library -- --batch-size 20
 # Repeat to continue; resolved tracks and valid TTML files are retained.
 npm run migrate:library -- --batch-size 20
 
-# Rebuild changed/missing vectors; unchanged inputs are reused.
-npm run backfill:embeddings
+# Rebuild the local lexical search database.
+npm run rebuild:search
 ```
 
 Options: `--index /path/to/index.json`, `--dry-run`, `--offline`,
@@ -307,7 +312,7 @@ Options: `--index /path/to/index.json`, `--dry-run`, `--offline`,
 `--overwrite-metadata` (explicitly replace existing artist/title corrections).
 Dry runs can perform lookups unless `--offline` is supplied, but write no files.
 Network failures leave entries usable and retryable. Confirmed negative matches are
-cached for one day; successful metadata for 30 days in `youtube-music-cache.json`.
+cached for one day; successful metadata for 30 days in `cache/youtube-music-cache.json`.
 Metadata lookups are serialized with a minimum gap and at most one retry. Optional
 song searches require a directly verified identity, the same title/version and artist
 set, and a duration within eight seconds. Unrelated watch-playlist recommendations
@@ -315,7 +320,8 @@ are never used. A linked counterpart can supply the song identity without changi
 which recording plays. Release years come from music/album metadata, not upload dates.
 
 Before any index conversion, a sibling `index.json.backup-<timestamp>-<uuid>` file
-preserves the source. TTML and JSON use temporary files, fsync, and atomic renames.
+preserves the source. A successful `npm run rebuild:search` removes these index backups
+at the user’s request, so keep any external backup you want before running it. TTML and JSON use temporary files, fsync, and atomic renames.
 Each migrated track is checkpointed, so interrupted runs resume without reconverting
 successful entries. Restore a backup only while the bot is stopped; keep the `lyrics`
 directory with the corresponding index. Backups contain embedded lyrics when the
@@ -342,22 +348,73 @@ seconds, unrelated title/artist, or timestamps beyond the playable recording are
 rejected. Duration agreement cannot detect equal-length edits or guarantee alignment;
 no automatic timing shift is applied, and the existing offset controls remain available.
 
-Embeddings use `Xenova/multilingual-e5-small`, mean pooling and unit normalization.
-Recognized tracks use `<title> <artist>` (for example, `Do I Wanna Know? Arctic Monkeys`); unresolved videos use their fallback
-title. Retrieval uses `passage:` for tracks and `query:` for queries, following the
-[model's retrieval conventions](https://huggingface.co/intfloat/multilingual-e5-small).
-The actual model input, model name, and preprocessing version determine `inputHash`.
-Old `titleHash` records and stale vectors are ignored; changed tracks regenerate on
-backfill/startup. Exact normalized title/artist matches take priority over semantic
-scores. The append-only embedding file may retain ignored historical records.
+Search uses two local SQLite FTS5 indexes: word/prefix BM25 and character trigrams.
+The top 100 combined candidates are reranked using RapidFuzz token similarity,
+corpus IDF, query coverage, unmatched-token penalties, and exact phrase bonuses.
+Query tokens are assigned independently to title or artist, with relevance weights
+based on those assignments. Metadata words (including live, remix and cover) are
+retained and treated like any other words. No version-specific penalties apply.
+Punctuation, case, accents and whitespace normalize consistently; non-Latin letters
+are retained. Trigrams cover partial words and misspellings; short misspelled words
+also expand against the indexed vocabulary. One-/two-character substrings use a
+bounded SQLite fallback because the trigram tokenizer cannot index them.
 
-`npm test` runs deterministic mocked API, storage, migration, embedding, and playback
-regressions against temporary libraries, without modifying local downloaded music.
+Confidence requires score >= 0.80, weighted query quality >= 0.80, coverage >= 0.85,
+and a top-two score margin >= 0.045. Ambiguous or weak matches fall back to the
+existing YouTube search flow. Scores are relevance measures, not probabilities.
+Artist-only queries may be ambiguous when several songs share that artist.
+SQLite is bundled in Node; Node >= 22.13 is required (Docker uses Node 22).
+`cache/search.sqlite` is derived from `index.json`, updates incrementally, and can be
+recreated without changing metadata, lyrics or audio. No external search service
+or model download is needed. Old embedding files are no longer used.
+
+`npm test` runs deterministic mocked API, storage, migration, lexical search,
+latency, and playback regressions against temporary libraries.
+
+### Move the old library to the new data layout
+
+Stop the bot before renaming or migrating its mounted directory. On the Linux server,
+run these commands from the project directory after deploying the updated source:
+
+```sh
+docker compose stop discord-bot
+
+# Rename the host folder before Compose creates/mounts ./data.
+# GNU mv -T refuses to nest downloadedMusic inside a pre-existing data directory.
+mv -T downloadedMusic data
+
+docker compose build discord-bot
+docker compose run --rm --no-deps discord-bot npm run migrate:layout -- --dry-run
+docker compose run --rm --no-deps discord-bot npm run migrate:layout
+docker compose run --rm --no-deps discord-bot npm run rebuild:search
+docker compose up -d
+```
+
+Run the host-folder rename once. If the folder is already called `data`, skip that
+step. On macOS, use `mv downloadedMusic data` only when `data` does not already exist.
+Update any explicit old `MUSIC_INDEX_PATH` setting to `/app/data/index.json` in Docker.
+
+`migrate:layout` moves existing media (including MP4s and unfinished `.part` downloads)
+into `music/`, and updates indexed audio paths to the actual data location. It retains
+filenames, IDs, metadata, lyrics references, and lyric file contents. Existing
+`.bot-data` and root-level support files move into `cache/` and `stats/`; the following
+search rebuild removes old derived databases and recognized backups. The layout
+migration itself does not create permanent backups or delete obsolete cache files.
+
+All destination media conflicts and missing indexed files are checked before moving.
+The source index remains unchanged until all media moves succeed, then is replaced
+atomically. Rerunning resumes interrupted moves and is safe on an already migrated
+library. Active SQLite indexes cause migration to stop until the bot is stopped.
+Unrelated personal files are retained. `--index /path/to/index.json` supports another
+library; `--playback-root /app/data` can set the recorded paths when migrating from
+outside the container. `--dry-run` previews the migration without writes.
+
+For a new installation, the bot creates the new directories automatically. For a
+legacy library, run the layout migration before starting the updated bot.
 
 ### Docker: prepare an existing server library
 
-Keep the server's existing `downloadedMusic` directory, including its index, audio,
-lyrics and caches. Deploy the updated source code and install the server's `.env` and
+Keep the server's existing library data, including its index, media, lyrics and caches. Deploy the updated source code and install the server's `.env` and
 `cookies.txt` beside `docker-compose.yml`. These credentials are excluded from the image.
 If you do not use cookies, create an empty `cookies.txt` before running Compose.
 
@@ -370,17 +427,17 @@ docker compose build discord-bot
 # Optional preview; no metadata network requests and no file changes.
 docker compose run --rm --no-deps discord-bot npm run prepare:library -- --dry-run --offline --relocate-audio
 
-# Process the full index (including a 550-entry library), then rebuild embeddings.
+# Process the full index (including a 550-entry library), then build the lexical index.
 docker compose run --rm --no-deps discord-bot npm run prepare:library -- --relocate-audio
 
 docker compose up -d
 docker compose logs -f discord-bot
 ```
 
-`prepare:library` performs migration, YouTube Music enrichment and embedding backfill
+`prepare:library` performs migration, YouTube Music enrichment and lexical indexing
 in that order. There is no default track limit. It uses the same backup, request
 throttling and checkpoint behavior as `migrate:library`. Rerun the command after an
-interruption; it reuses completed metadata and vectors. Recognized metadata corrections
+interruption; it reuses completed metadata and search entries. Recognized metadata corrections
 are preserved unless `--overwrite-metadata` is explicitly supplied. Non-music videos
 and unrecognized songs keep their fallback titles and remain in the library.
 
@@ -395,14 +452,51 @@ another position, add `--offset 50` (zero-based). A full preparation without the
 is simplest for an established library. It can take several minutes depending on
 YouTube responses; unsuccessful recognition does not imply the video is a song.
 
-The model is downloaded on first use and retained in the `embedding-models` Docker
-volume, controlled by `EMBEDDING_CACHE_DIR`. The index, TTML files and vectors remain in
-the host's mounted `downloadedMusic` folder. Compose `up` starts the bot; run the
-preparation command beforehand when enriching an existing server library.
+The index, media, TTML files and `cache/search.sqlite` remain in the host's mounted
+`data` folder. Compose `up` starts the bot; run preparation beforehand
+when enriching an existing library. For an already-enriched server library, run:
 
-Embedding preprocessing version 3 uses the text `Do I Wanna Know? Arctic Monkeys`.
-The E5 model receives its internal `passage:` prefix for library vectors and `query:`
-for searches. `embeddings.jsonl` now stores `inputText` so each track's source text is
-inspectable. The version change invalidates older vectors once. Discord's player,
-queue, loop previews and notifications display **Do I Wanna Know? – Arctic Monkeys** when
-artist metadata exists; videos without artist metadata display their original title.
+```sh
+docker compose stop discord-bot
+docker compose build discord-bot
+docker compose run --rm --no-deps discord-bot npm run rebuild:search
+docker compose up -d
+```
+
+The rebuild also moves legacy YouTube Music cache and analytics files into `cache/`
+and `stats/`, then
+permanently removes recognized `index.json.backup*`/`index.json.bak` files, obsolete
+`embeddings.jsonl` files and their recognized backups, and the old root-level search
+database after verifying the new index. Audio, TTML lyrics, `index.json`, unrelated
+files and differently named backups are left in place. If both an existing root cache
+and its organized counterpart differ, both are retained and a warning is printed.
+Stop the bot before this command so it does not keep using the old file locations.
+If either search database is open by another process, the command stops without
+removing files; stop the bot and try again.
+A later library migration can create a fresh safety backup; the next rebuild removes it.
+The previous Docker model-cache volume is no longer mounted or used and is not deleted. Discord's native linked embed title displays
+**Do I Wanna Know? – Arctic Monkeys** when artist metadata exists; videos without
+artist metadata display their original title.
+
+### Latency diagnostics in `!stats`
+
+The stats reply includes AVG, P90, P99 (milliseconds), and sample count for:
+
+- Discord gateway: latest heartbeat round-trip reading, sampled once per second
+  while connected. Samples are observations of the latest reading, not extra pings;
+  consecutive values can repeat until Discord supplies another heartbeat result.
+- Event loop lag: the lateness of a once-per-second timer. A stall produces one
+  delayed sample; missed ticks are not fabricated.
+- Command response: command dispatch to the first successful reply or interaction
+  acknowledgment (including Discord REST time). Failed replies are not samples.
+- Command processing: dispatch to handler completion, including later work after
+  the initial response. The currently executing stats command enters the next window.
+
+All timing uses a monotonic clock. Measurements expire after 180 seconds, including
+while idle. AVG is available with one sample, P90 with ten, P99 with one hundred;
+otherwise `n/a` is shown with the sample count. Percentiles use nearest rank.
+Only a small timer and rolling arrays run in the background; sorting occurs when
+stats are requested. Latency measurements are never persisted to analytics JSON,
+SQLite, logs, or an external monitoring service. A high gateway RTT suggests network
+or Discord latency; high loop lag points to local blocking; high processing time
+with a quick first response points to work after acknowledgment.

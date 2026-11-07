@@ -19,17 +19,17 @@ test('new download immediately persists normalized metadata and queues the origi
     }
     const session = {};
     let queued;
-    let embedding;
+    let indexedTrack;
     mock('src/core/sessionManager.js', { ensureSession: () => session, userDefaultVC: new Map() });
     mock('src/services/cacheService.js', { queueTrackIntoSession: (_s, _g, track) => { queued = track; return { startedImmediately: false }; } });
-    mock('src/services/cacheSearchService.js', { scheduleTrackEmbedding: async (track) => { embedding = track; }, searchCachedMusic: async () => ({ track: null }) });
+    mock('src/services/cacheSearchService.js', { indexCachedTrack: async (track) => { indexedTrack = track; }, searchCachedMusic: async () => ({ track: null }) });
     mock('src/services/playlistService.js', { detectIfPlaylist: async () => false });
     mock('src/services/spotifyPlaylistService.js', { isSpotifyPlaylistUrl: () => false });
     mock('src/core/youtubeMetadata.js', { extractYouTubeVideoId: () => 'bpOSxM0rNPM', classifyMetadataError: () => 'error', fetchMetadataWithFallback: async () => ({ metadata: {
       title: 'bpOSxM0rNPM', id: 'Artist - Song (Official Video)', realTitle: 'Artist - Song (Official Video)', duration: 20, artist: 'Unverified channel',
       url: 'https://youtube.com/watch?v=bpOSxM0rNPM'
     } }) });
-    const filePath = path.join(path.dirname(process.env.MUSIC_INDEX_PATH), 'original.webm');
+    const filePath = path.join(path.dirname(process.env.MUSIC_INDEX_PATH), 'music', 'original.webm');
     fs.mkdirSync(path.dirname(filePath), { recursive: true });
     fs.writeFileSync(filePath, 'audio');
     mock('src/services/downloadService.js', { downloadTrack: async () => ({ filePath, attemptHistory: [] }) });
@@ -45,7 +45,7 @@ test('new download immediately persists normalized metadata and queues the origi
       assert.equal(queued.artist, 'Artist');
       assert.equal(queued.id, 'bpOSxM0rNPM');
       assert.equal(queued.filePath, filePath);
-      assert.equal(embedding.title, 'Song');
+      assert.equal(indexedTrack.title, 'Song');
       const library = JSON.parse(fs.readFileSync(process.env.MUSIC_INDEX_PATH, 'utf8'));
       const track = library.tracks.find(t => t.id === 'bpOSxM0rNPM');
       assert.equal(track.videoTitle, 'Artist - Song (Official Video)');

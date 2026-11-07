@@ -3,8 +3,7 @@ const { execFile } = require('child_process');
 const https = require('https');
 const { sessions } = require('../core/sessionManager');
 const { ytDlpPath } = require('../core/binaries');
-const { dotProduct } = require('../core/musicEmbeddingIndex');
-const { embedMusicTitles } = require('./cacheSearchService');
+const { fuzzyScorers, trackFields } = require('../core/searchText');
 const { resolveGuildIdForBoundAwareCommand } = require('./messageContextService');
 
 const LASTFM_API_KEY = process.env.LASTFM_API_KEY || null;
@@ -14,12 +13,12 @@ const numericSetting = (value, fallback) => {
   const parsed = Number(value);
   return Number.isFinite(parsed) && parsed >= -1 && parsed <= 1 ? parsed : fallback;
 };
-const AUTOPLAY_SEMANTIC_REJECT_THRESHOLD = numericSetting(
-  process.env.AUTOPLAY_SEMANTIC_REJECT_THRESHOLD,
+const AUTOPLAY_LEXICAL_REJECT_THRESHOLD = numericSetting(
+  process.env.AUTOPLAY_LEXICAL_REJECT_THRESHOLD,
   0.93
 );
-const AUTOPLAY_SEMANTIC_PENALTY_START = numericSetting(
-  process.env.AUTOPLAY_SEMANTIC_PENALTY_START,
+const AUTOPLAY_LEXICAL_PENALTY_START = numericSetting(
+  process.env.AUTOPLAY_LEXICAL_PENALTY_START,
   0.83
 );
 const AUTOPLAY_MAX_DIVERSITY_PENALTY = 45;
@@ -563,78 +562,48 @@ function filterRecentHistoryCandidates(candidates, historyTracks = []) {
   return candidates.filter((candidate) => !isInRecentHistory(candidate, historyTracks));
 }
 
-function autoplayTitle(track) {
-  return track?.artist
-    ? require('../core/musicEmbeddingIndex').embeddingTitle(track)
-    : String(track?.title || track?.displayTitle || '').trim();
-}
-
-async function applyEmbeddingDiversity(
+async function applyLexicalDiversity(
   candidates,
   historyTracks = [],
   {
-    embedTitles = embedMusicTitles,
-    rejectThreshold = AUTOPLAY_SEMANTIC_REJECT_THRESHOLD,
-    penaltyStart = AUTOPLAY_SEMANTIC_PENALTY_START
+    rejectThreshold = AUTOPLAY_LEXICAL_REJECT_THRESHOLD,
+    penaltyStart = AUTOPLAY_LEXICAL_PENALTY_START
   } = {}
 ) {
-  const recentTracks = historyTracks.slice(0, AUTOPLAY_RECENT_TRACK_LIMIT);
-  if (!candidates.length || !recentTracks.length) return candidates;
-
-  const candidateTitles = candidates.map((candidate) => autoplayTitle(candidate.track));
-  const historyTitles = recentTracks.map(autoplayTitle).filter(Boolean);
-  if (!historyTitles.length) return candidates;
-
-  const vectors = await embedTitles([...candidateTitles, ...historyTitles]);
-  const candidateVectors = vectors.slice(0, candidateTitles.length);
-  const historyVectors = vectors.slice(candidateTitles.length);
-  const scored = [];
-
-  candidates.forEach((candidate, index) => {
-    const candidateVector = candidateVectors[index];
-    if (!candidateVector?.length) {
-      scored.push({
-        ...candidate,
-        baseScore: candidate.score,
-        diversityPenalty: 0,
-        maxRecentSimilarity: null
-      });
-      return;
+  const history = historyTracks.slice(0, AUTOPLAY_RECENT_TRACK_LIMIT);
+  if (!candidates.length || !history.length) return candidates;
+  const { tokenSortRatio } = await fuzzyScorers();
+  return candidates.flatMap((candidate) => {
+    const fields = trackFields(candidate.track);
+    let maxRecentSimilarity = 0;
+    for (const track of history) {
+      const recent = trackFields(track);
+      const titleScore = tokenSortRatio(fields.title, recent.title) / 100;
+      const similarity =
+        fields.artist && recent.artist
+          ? 0.8 * titleScore + (0.2 * tokenSortRatio(fields.artist, recent.artist)) / 100
+          : titleScore;
+      maxRecentSimilarity = Math.max(maxRecentSimilarity, similarity);
     }
-    let maxRecentSimilarity = -1;
-    for (const historyVector of historyVectors) {
-      if (!historyVector?.length) continue;
-      maxRecentSimilarity = Math.max(
-        maxRecentSimilarity,
-        dotProduct(candidateVector, historyVector)
-      );
-    }
-
-    if (maxRecentSimilarity >= rejectThreshold) return;
-    const penaltyRange = Math.max(rejectThreshold - penaltyStart, 0.01);
-    const penaltyRatio = Math.max(
+    if (maxRecentSimilarity >= rejectThreshold) return [];
+    const ratio = Math.max(
       0,
-      Math.min(1, (maxRecentSimilarity - penaltyStart) / penaltyRange)
+      Math.min(
+        1,
+        (maxRecentSimilarity - penaltyStart) / Math.max(rejectThreshold - penaltyStart, 0.01)
+      )
     );
-    const diversityPenalty = Math.round(penaltyRatio * AUTOPLAY_MAX_DIVERSITY_PENALTY);
-    scored.push({
-      ...candidate,
-      score: candidate.score - diversityPenalty,
-      baseScore: candidate.score,
-      diversityPenalty,
-      maxRecentSimilarity
-    });
+    const diversityPenalty = Math.round(ratio * AUTOPLAY_MAX_DIVERSITY_PENALTY);
+    return [
+      {
+        ...candidate,
+        score: candidate.score - diversityPenalty,
+        baseScore: candidate.score,
+        diversityPenalty,
+        maxRecentSimilarity
+      }
+    ];
   });
-
-  const keptSimilarities = scored
-    .map((candidate) => candidate.maxRecentSimilarity)
-    .filter((similarity) => similarity != null);
-  const bestSimilarity = keptSimilarities.length ? Math.max(...keptSimilarities) : null;
-  console.log(
-    `[Autoplay Embeddings] recent=${historyTitles.length}, candidates=${candidates.length}, ` +
-      `rejected=${candidates.length - scored.length}, highest-kept-similarity=${bestSimilarity == null ? 'n/a' : bestSimilarity.toFixed(4)}`
-  );
-  return scored;
 }
 
 function selectCandidateRoulette(candidates) {
@@ -727,16 +696,16 @@ async function findAutoplayCandidate(currentUrl, historyUrls = [], options = {})
   }
 
   try {
-    candidates = await applyEmbeddingDiversity(candidates, historyTracks);
+    candidates = await applyLexicalDiversity(candidates, historyTracks);
     if (candidates.length === 0 && usedLastFm && !usedFallback) {
       const fallbackCandidates = filterRecentHistoryCandidates(
         dedupeCandidates(await getCandidatesFromFallback(metadata, parsed, history)),
         historyTracks
       );
-      candidates = await applyEmbeddingDiversity(fallbackCandidates, historyTracks);
+      candidates = await applyLexicalDiversity(fallbackCandidates, historyTracks);
     }
   } catch (error) {
-    console.warn('[Autoplay Embeddings] Diversity scoring unavailable:', error.message);
+    console.warn('[Autoplay Lexical] Diversity scoring unavailable:', error.message);
   }
 
   candidates.sort((a, b) => b.score - a.score);
@@ -806,7 +775,7 @@ async function handleAutoplayCommand(client, message) {
 }
 
 module.exports = {
-  applyEmbeddingDiversity,
+  applyLexicalDiversity,
   filterRecentHistoryCandidates,
   handleAutoplayCommand,
   findAutoplayCandidate

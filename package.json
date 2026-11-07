@@ -7,14 +7,15 @@
     "prestart": "node scripts/start-bgutil.js",
     "start": "node index.js",
     "benchmark:youtube": "node scripts/benchmark-youtube-pipeline.js",
-    "backfill:embeddings": "node scripts/backfill-embeddings.js",
     "format": "prettier --write .",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "test": "node --require ./scripts/test-env.js --test",
     "check": "npm run format && npm run lint:fix",
     "migrate:library": "node scripts/migrate-library.js",
-    "prepare:library": "node scripts/prepare-library.js"
+    "prepare:library": "node scripts/prepare-library.js",
+    "rebuild:search": "node scripts/rebuild-search.js",
+    "migrate:layout": "node scripts/migrate-layout.js"
   },
   "keywords": [],
   "author": "",
@@ -22,7 +23,6 @@
   "dependencies": {
     "@discordjs/opus": "^0.10.0",
     "@discordjs/voice": "^0.19.0",
-    "@huggingface/transformers": "^3.8.1",
     "@noble/ciphers": "^2.0.1",
     "@snazzah/davey": "^0.1.7",
     "@stablelib/xchacha20poly1305": "^2.0.1",
@@ -32,6 +32,7 @@
     "libsodium-wrappers": "^0.7.15",
     "opusscript": "^0.0.8",
     "playwright": "^1.59.1",
+    "rapidfuzz-js": "^0.13.0",
     "sodium-native": "^5.0.9",
     "youtubei.js": "^18.3.0"
   },
@@ -40,5 +41,8 @@
     "eslint": "^10.3.0",
     "globals": "^17.6.0",
     "prettier": "^3.8.3"
+  },
+  "engines": {
+    "node": ">=22.13.0"
   }
 }

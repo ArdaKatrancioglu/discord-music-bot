@@ -4,12 +4,26 @@ const { parseCachedMp3Filename } = require('../utils/titleUtils');
 const { atomicWrite } = require('./atomicFile');
 const { migrateLocalLibrary, normalizeTrack, readLibrary } = require('./libraryMigration');
 const { readLyrics, writeLyrics } = require('./lyricsStore');
+const { resolveIndexPath, libraryMusicDirectory, MEDIA_FILE_PATTERN } = require('./libraryPaths');
 
-const indexPath = path.resolve(
-  process.env.MUSIC_INDEX_PATH || path.join(process.cwd(), 'downloadedMusic', 'index.json')
-);
-const downloadsDir = path.dirname(indexPath);
-fs.mkdirSync(downloadsDir, { recursive: true });
+const indexPath = resolveIndexPath();
+if (
+  !process.env.MUSIC_INDEX_PATH &&
+  !fs.existsSync(indexPath) &&
+  fs.existsSync(path.resolve('downloadedMusic/index.json'))
+) {
+  throw new Error(
+    'Legacy downloadedMusic library detected. Rename it to data and run npm run migrate:layout before starting the bot.'
+  );
+}
+const musicDir = libraryMusicDirectory(indexPath);
+const root = path.dirname(indexPath);
+if (fs.existsSync(root) && fs.readdirSync(root).some((file) => MEDIA_FILE_PATTERN.test(file))) {
+  throw new Error(
+    'Legacy flat media layout detected. Stop the bot and run npm run migrate:layout first.'
+  );
+}
+fs.mkdirSync(musicDir, { recursive: true });
 // A corrupt existing index must never be silently replaced with an empty library.
 let index = fs.existsSync(indexPath) ? migrateLocalLibrary(indexPath) : { version: 2, tracks: [] };
 
@@ -18,9 +32,9 @@ function saveIndex(next) {
   index = next;
 }
 
-for (const file of fs.readdirSync(downloadsDir)) {
-  if (!/\.(mp3|m4a|webm)$/i.test(file)) continue;
-  const full = path.join(downloadsDir, file);
+for (const file of fs.readdirSync(musicDir)) {
+  if (!MEDIA_FILE_PATTERN.test(file)) continue;
+  const full = path.join(musicDir, file);
   const { id, titleSan, title } = parseCachedMp3Filename(file);
   const exists = index.tracks.some(
     (track) =>
@@ -116,11 +130,11 @@ function listAllCachedTracksUnique() {
 }
 
 console.log(
-  `[Init] Indexed downloads: ${new Set(index.tracks.map((track) => track.filePath)).size} file(s)`
+  `[Init] Indexed library media: ${new Set(index.tracks.map((track) => track.filePath)).size} file(s)`
 );
 module.exports = {
   indexPath,
-  downloadsDir,
+  musicDir,
   getTrackFromCache,
   addTrackToCache,
   updateTrackLyrics,

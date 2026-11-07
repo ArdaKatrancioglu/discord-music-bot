@@ -1,8 +1,9 @@
 const fs = require('fs');
 const path = require('path');
-const { downloadsDir } = require('../core/musicIndex');
+const { indexPath } = require('../core/musicIndex');
+const { libraryDataFile } = require('../core/libraryPaths');
 
-const analyticsPath = path.join(downloadsDir, 'analytics.json');
+const analyticsPath = libraryDataFile(indexPath, 'analytics.json');
 const RECENT_EVENT_LIMIT = 200;
 const analyticsEnabled =
   process.env.ANALYTICS_DISABLED !== 'true' && !process.env.NODE_TEST_CONTEXT;
@@ -111,9 +112,7 @@ function normalizeAnalytics(value) {
       ...empty.downloads,
       ...(value.downloads || {}),
       attempts: {
-        withoutCookies: normalizeStrategyCounters(
-          value.downloads?.attempts?.withoutCookies
-        ),
+        withoutCookies: normalizeStrategyCounters(value.downloads?.attempts?.withoutCookies),
         withCookies: normalizeStrategyCounters(value.downloads?.attempts?.withCookies)
       }
     },
@@ -142,6 +141,7 @@ function saveAnalytics() {
   analytics.updatedAt = new Date().toISOString();
   const temporaryPath = `${analyticsPath}.${process.pid}.tmp`;
   try {
+    fs.mkdirSync(path.dirname(analyticsPath), { recursive: true });
     fs.writeFileSync(temporaryPath, JSON.stringify(analytics, null, 2) + '\n', 'utf8');
     fs.renameSync(temporaryPath, analyticsPath);
   } catch (error) {

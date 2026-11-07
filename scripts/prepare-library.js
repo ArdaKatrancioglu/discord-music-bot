@@ -1,31 +1,34 @@
-const path = require('path');
 const { argumentsFor, runMigration } = require('./migrate-library');
-const { MusicEmbeddingIndex } = require('../src/core/musicEmbeddingIndex');
+const { MusicSearchIndex } = require('../src/core/musicSearchIndex');
+const { libraryDataFile } = require('../src/core/libraryPaths');
 
 async function prepareLibrary(options) {
   const result = await runMigration(options);
   if (options.dryRun) {
-    console.log('[Prepare] Dry run: embedding generation skipped; no files changed.');
+    console.log('[Prepare] Dry run: search indexing skipped; no files changed.');
     return result;
   }
-  const embeddingIndex = new MusicEmbeddingIndex({
-    storePath: path.join(path.dirname(options.indexPath), 'embeddings.jsonl')
+  const searchIndex = new MusicSearchIndex({
+    storePath: libraryDataFile(options.indexPath, 'search.sqlite')
   });
-  const embeddings = await embeddingIndex.backfill(result.index.tracks);
+  let search;
+  try {
+    search = searchIndex.synchronize(result.index.tracks);
+  } finally {
+    searchIndex.close();
+  }
   const recognized = result.index.tracks.filter((track) => track.artist).length;
   console.log(
     `[Prepare] ${recognized}/${result.tracks} recognized music tracks; other videos retain their fallback titles.`
   );
-  console.log(
-    `[Prepare] Embeddings: ${embeddings.generated} generated, ${embeddings.indexed} indexed.`
-  );
+  console.log(`[Prepare] Search: ${search.generated} updated, ${search.indexed} indexed.`);
   if (result.missingAudio) {
     throw new Error(
-      `${result.missingAudio} audio file(s) are unavailable. Mount the complete downloadedMusic directory and retry with --relocate-audio.`
+      `${result.missingAudio} audio file(s) are unavailable. Mount the complete data directory and retry with --relocate-audio.`
     );
   }
   console.log('[Prepare] Library ready. Start the bot with docker compose up -d.');
-  return { ...result, embeddings };
+  return { ...result, search };
 }
 
 if (require.main === module) {

@@ -3,7 +3,8 @@ const path = require('path');
 const { spawn } = require('child_process');
 const { performance } = require('perf_hooks');
 const { resolveBinary, ffmpegPath, ytDlpPath } = require('../core/binaries');
-const { downloadsDir } = require('../core/musicIndex');
+const { musicDir } = require('../core/musicIndex');
+const { MEDIA_FILE_PATTERN } = require('../core/libraryPaths');
 
 const AUDIO_ONLY_FORMAT = 'bestaudio[ext=webm]/bestaudio[ext=m4a]/bestaudio';
 const ANY_AUDIO_FORMAT = 'bestaudio*/best*[acodec!=none]/best';
@@ -88,13 +89,15 @@ function diagnoseDownloadError(error) {
   const details = [];
 
   if (/unable to download video data:.*403|http error 403|403 forbidden/i.test(output)) {
-    details.push('YouTube metadata was retrieved, but its media CDN rejected the audio-data request.');
+    details.push(
+      'YouTube metadata was retrieved, but its media CDN rejected the audio-data request.'
+    );
 
     const format = output.match(/Downloading \d+ format\(s\):\s*([^\r\n]+)/i)?.[1];
     if (format) details.push(`Rejected format: ${format.trim()}.`);
 
-    const clients = [...output.matchAll(/Downloading ([^\r\n]+?) player API JSON/gi)].map(
-      (match) => match[1].trim()
+    const clients = [...output.matchAll(/Downloading ([^\r\n]+?) player API JSON/gi)].map((match) =>
+      match[1].trim()
     );
     if (clients.length) details.push(`Player client(s): ${[...new Set(clients)].join(', ')}.`);
 
@@ -148,7 +151,7 @@ function runYtDlpDownload({
   format,
   useAria2c = false,
   alternateClients = false,
-  outputDir = downloadsDir,
+  outputDir = musicDir,
   useCookies
 }) {
   return new Promise((resolve, reject) => {
@@ -234,12 +237,12 @@ function runYtDlpDownload({
 }
 
 function findDownloadedFile({ id, titleSan }) {
-  const files = fs.readdirSync(downloadsDir);
+  const files = fs.readdirSync(musicDir);
   return files.find(
     (file) =>
       file.startsWith(`${id}_${titleSan}.`) &&
-      /\.(mp3|m4a|webm|mp4|opus|ogg|wav)$/i.test(file) &&
-      fs.statSync(path.join(downloadsDir, file)).size > 0
+      MEDIA_FILE_PATTERN.test(file) &&
+      fs.statSync(path.join(musicDir, file)).size > 0
   );
 }
 
@@ -318,7 +321,7 @@ async function downloadTrack({ id, titleSan, url, filenameTemplate, onRetry, onA
           format: strategy.format
         };
       }
-      const bytes = fs.statSync(path.join(downloadsDir, file)).size;
+      const bytes = fs.statSync(path.join(musicDir, file)).size;
       successfulAttempt = {
         strategyKey,
         strategy: strategy.name,
@@ -392,7 +395,7 @@ async function downloadTrack({ id, titleSan, url, filenameTemplate, onRetry, onA
     };
   }
 
-  const filepath = path.join(downloadsDir, file);
+  const filepath = path.join(musicDir, file);
 
   return {
     filePath: filepath,

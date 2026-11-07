@@ -14,12 +14,13 @@ test('preparation accepts Docker relocation and metadata batch options', () => {
   assert.equal(argumentsFor([]).batchSize, undefined, 'full library has no default limit');
 });
 
-test('prepares a mixed 550-entry library before embedding, supports dry-run, resume and missing-audio reporting', () => {
+test('prepares a mixed 550-entry library before lexical indexing, supports dry-run, resume and missing-audio reporting', () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'prepare-library-test-'));
   const indexPath = path.join(directory, 'index.json');
+  fs.mkdirSync(path.join(directory, 'music'));
   const tracks = Array.from({ length: 550 }, (_, position) => {
     const filename = `audio-${position}.webm`;
-    fs.writeFileSync(path.join(directory, filename), 'audio');
+    fs.writeFileSync(path.join(directory, 'music', filename), 'audio');
     return {
       id: String(position).padStart(11, '0'),
       title: `Video ${position}`,
@@ -46,25 +47,12 @@ test('prepares a mixed 550-entry library before embedding, supports dry-run, res
         return position % 10 === 0 ? null : { title: 'Song ' + position, artist: 'Artist ' + position };
       }
     } };
-    const embeddingPath = require.resolve(path.join(root, 'src/core/musicEmbeddingIndex.js'));
-    const embeddings = require(embeddingPath);
-    let backfills = 0;
-    require.cache[embeddingPath].exports = { ...embeddings, MusicEmbeddingIndex: class {
-      async backfill(tracks) {
-        backfills++;
-        assert.equal(tracks.length, 550);
-        const music = tracks.find(track => track.id === '00000000001');
-        assert.equal(embeddings.embeddingTitle(music), 'Song 1 Artist 1');
-        assert.equal(tracks[0].artist, null);
-        assert.ok(fs.existsSync(music.filePath));
-        return { generated: backfills === 1 ? 550 : 0, indexed: 550 };
-      }
-    } };
     const { prepareLibrary } = require(path.join(root, 'scripts/prepare-library.js'));
     (async () => {
       const before = fs.readFileSync(indexPath, 'utf8');
       await prepareLibrary({ indexPath, dryRun: true, offline: true, relocateAudio: true });
-      assert.equal(backfills, 0);
+      assert.equal(fs.existsSync(path.join(path.dirname(indexPath), 'search.sqlite')), false);
+      assert.equal(fs.existsSync(path.join(path.dirname(indexPath), 'cache')), false);
       assert.equal(metadataCalls, 0);
       assert.equal(fs.readFileSync(indexPath, 'utf8'), before);
       const result = await prepareLibrary({ indexPath, relocateAudio: true });
@@ -78,7 +66,13 @@ test('prepares a mixed 550-entry library before embedding, supports dry-run, res
       const checkpoint = fs.readFileSync(indexPath, 'utf8');
       const repeat = await prepareLibrary({ indexPath, offline: true, relocateAudio: true });
       assert.equal(fs.readFileSync(indexPath, 'utf8'), checkpoint);
-      assert.equal(repeat.embeddings.generated, 0);
+      assert.equal(repeat.search.generated, 0);
+      assert.equal(repeat.search.indexed, 550);
+      const { MusicSearchIndex } = require(path.join(root, 'src/core/musicSearchIndex.js'));
+      const lexical = new MusicSearchIndex({ storePath: path.join(path.dirname(indexPath), 'cache', 'search.sqlite') });
+      const found = await lexical.search('Song 1 Artist 1', result.index.tracks);
+      assert.equal(found.match.id, '00000000001');
+      lexical.close();
       assert.equal(metadataCalls, 550);
       fs.unlinkSync(result.index.tracks[0].filePath);
       await assert.rejects(prepareLibrary({ indexPath, offline: true }), /1 audio file/);

@@ -16,13 +16,9 @@ services:
       BGUTIL_BASE_URL: 'http://bgutil-pot:4416'
       USE_COOKIES: '${USE_COOKIES:-false}'
       USE_ARIA2C_FOR_VIDEO_FALLBACK: 'false'
-      EMBEDDING_CACHE_DIR: '/app/model-cache'
+      BOT_DATA_DIR: '/app/data'
     env_file:
       - .env
     volumes:
-      - ./downloadedMusic:/app/downloadedMusic
+      - ./data:/app/data
       - ./cookies.txt:/app/cookies.txt:rw
-      - embedding-models:/app/model-cache
-
-volumes:
-  embedding-models:

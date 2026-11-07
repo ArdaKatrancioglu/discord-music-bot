@@ -19,7 +19,7 @@ const { getBoundVoiceTarget, setBoundVoiceTarget } = require('./messageContextSe
 const { queueTrackIntoSession } = require('./cacheService');
 const { downloadTrack } = require('./downloadService');
 const { isSpotifyPlaylistUrl, handleSpotifyPlaylist } = require('./spotifyPlaylistService');
-const { scheduleTrackEmbedding, searchCachedMusic } = require('./cacheSearchService');
+const { indexCachedTrack, searchCachedMusic } = require('./cacheSearchService');
 const { RepeatedQueryTracker } = require('./repeatedQueryService');
 const {
   recordCacheHit,
@@ -32,12 +32,12 @@ const {
 } = require('./analyticsService');
 
 const repeatedQueries = new RepeatedQueryTracker();
-const path = require('path');
 const { indexPath } = require('../core/musicIndex');
+const { libraryDataFile } = require('../core/libraryPaths');
 const { normalizeTrack } = require('../core/libraryMigration');
 const { YouTubeMusicResolver, applyMusicMetadata } = require('../core/youtubeMusicMetadata');
 const musicResolver = new YouTubeMusicResolver({
-  cachePath: path.join(path.dirname(indexPath), 'youtube-music-cache.json')
+  cachePath: libraryDataFile(indexPath, 'youtube-music-cache.json')
 });
 
 async function handlePlayRequest(client, message, query) {
@@ -163,8 +163,7 @@ async function handlePlayRequest(client, message, query) {
     }
   }
 
-  // For text queries, retain cheap high-confidence keyword matching and only
-  // embed the query when that does not find a cached track.
+  // Retrieve and rerank local title/artist matches before searching YouTube.
   if (!queryIsUrl && !repeatState.shouldTryYouTubeAlternative) {
     try {
       const cacheSearch = await searchCachedMusic(query, listAllCachedTracksUnique());
@@ -174,8 +173,8 @@ async function handlePlayRequest(client, message, query) {
         return message.reply(`⏱ cache hit (${cacheSearch.source}${score})`);
       }
     } catch (error) {
-      // A missing/unavailable local model should not break normal YouTube search.
-      console.warn('[Semantic Search] Falling back to YouTube:', error.message);
+      // An unavailable local search index must not break normal YouTube search.
+      console.warn('[Lexical Search] Falling back to YouTube:', error.message);
     }
   }
 
@@ -302,9 +301,12 @@ async function handlePlayRequest(client, message, query) {
     libraryTrack = applyMusicMetadata(libraryTrack, await musicResolver.resolve(libraryTrack));
     addTrackToCache(libraryTrack);
     try {
-      await scheduleTrackEmbedding(libraryTrack);
+      await indexCachedTrack(libraryTrack);
     } catch (error) {
-      console.warn('[Embeddings] New track will be retried by backfill:', error.message);
+      console.warn(
+        '[Lexical Search] New track will be retried by index synchronization:',
+        error.message
+      );
     }
 
     const track = {

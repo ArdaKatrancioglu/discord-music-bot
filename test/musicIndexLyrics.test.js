@@ -12,8 +12,8 @@ const lyricsServiceModule = path.resolve(__dirname, '../src/services/lyricsServi
 
 test('updateTrackLyrics changes only the matching track lyrics field', () => {
   const tempDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'discord-music-index-'));
-  const downloadsDirectory = path.join(tempDirectory, 'downloadedMusic');
-  fs.mkdirSync(downloadsDirectory);
+  const dataDirectory = path.join(tempDirectory, 'data');
+  fs.mkdirSync(dataDirectory);
 
   const originalIndex = {
     version: 1,
@@ -36,7 +36,7 @@ test('updateTrackLyrics changes only the matching track lyrics field', () => {
     ]
   };
   fs.writeFileSync(
-    path.join(downloadsDirectory, 'index.json'),
+    path.join(dataDirectory, 'index.json'),
     JSON.stringify(originalIndex, null, 2),
     'utf8'
   );
@@ -53,14 +53,14 @@ test('updateTrackLyrics changes only the matching track lyrics field', () => {
   `;
   const child = spawnSync(process.execPath, ['-e', script], {
     cwd: tempDirectory,
-    env: { ...process.env, MUSIC_INDEX_PATH: path.join(downloadsDirectory, 'index.json') },
+    env: { ...process.env, MUSIC_INDEX_PATH: path.join(dataDirectory, 'index.json') },
     encoding: 'utf8'
   });
 
   try {
     assert.equal(child.status, 0, child.stderr);
     const updatedIndex = JSON.parse(
-      fs.readFileSync(path.join(downloadsDirectory, 'index.json'), 'utf8')
+      fs.readFileSync(path.join(dataDirectory, 'index.json'), 'utf8')
     );
     assert.deepEqual(updatedIndex.tracks[0], {
       ...normalizeTrack(originalIndex.tracks[0]),
@@ -69,8 +69,8 @@ test('updateTrackLyrics changes only the matching track lyrics field', () => {
     });
     assert.deepEqual(updatedIndex.tracks[1], normalizeTrack(originalIndex.tracks[1]));
     assert.equal(
-      readLyrics(path.join(downloadsDirectory, 'index.json'), updatedIndex.tracks[0].lyrics)
-        .lines[0].timestamp,
+      readLyrics(path.join(dataDirectory, 'index.json'), updatedIndex.tracks[0].lyrics).lines[0]
+        .timestamp,
       12.34
     );
     assert.equal(updatedIndex.version, 2);
@@ -121,7 +121,7 @@ test('updateTrackLyrics changes only the matching track lyrics field', () => {
     `;
     const cacheReadChild = spawnSync(process.execPath, ['-e', cacheReadScript], {
       cwd: tempDirectory,
-      env: { ...process.env, MUSIC_INDEX_PATH: path.join(downloadsDirectory, 'index.json') },
+      env: { ...process.env, MUSIC_INDEX_PATH: path.join(dataDirectory, 'index.json') },
       encoding: 'utf8'
     });
     assert.equal(cacheReadChild.status, 0, cacheReadChild.stderr || cacheReadChild.stdout);
