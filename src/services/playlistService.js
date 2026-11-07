@@ -1,4 +1,3 @@
-const { formatTrackName } = require('../utils/titleUtils');
 const { spawn } = require('child_process');
 const { ytDlpPath } = require('../core/binaries');
 const { getPlaylistTracks } = require('../core/playlist_scraper');
@@ -39,23 +38,22 @@ async function handlePlaylist(client, message, url) {
   const session = ensureSession(guildId, channelId, guild.voiceAdapterCreator);
   session.lastChannel = message.channel;
 
-  await message.reply('⏳ Fetching Playlist...');
+  await message.reply('Loading playlist…');
 
   let list;
   try {
     list = await getPlaylistTracks(url);
   } catch (e) {
     console.error(e);
-    return message.reply('❌ There is been an error while fecthing playlist.');
+    return message.reply('Couldn’t load this playlist. Try another link.');
   }
 
-  await message.reply(`📜 Playlist bulundu. Parça: **${list.length}**\nBaşlatılıyor...`);
+  await message.reply(`Playlist ready · ${list.length} tracks`);
 
-  const pushFn = async (track, guildId, channel) => {
+  const pushFn = async (track) => {
     const query = track.url;
 
     try {
-      await channel.send(`➕ Queue: **${formatTrackName(track)}**`);
       message.content = `!play ${query}`;
       client.emit('messageCreate', message);
     } catch (err) {

@@ -1,4 +1,3 @@
-const { formatTrackName } = require('../utils/titleUtils');
 const { execFile } = require('child_process');
 const https = require('https');
 const { sessions } = require('../core/sessionManager');
@@ -725,23 +724,21 @@ async function handleAutoplayCommand(client, message) {
   const guildId = resolveGuildIdForBoundAwareCommand(message);
 
   if (!guildId) {
-    return message.reply('⚠️ There are no sessions.');
+    return message.reply('Nothing is playing.');
   }
 
   const session = sessions.get(guildId);
-  if (!session) return message.reply('⚠️ There are no sessions.');
+  if (!session) return message.reply('Nothing is playing.');
 
   if (!session.currentTrack) {
-    return message.reply('⚠️ Nothing is currently playing.');
+    return message.reply('Nothing is playing.');
   }
 
   if (!session.currentTrack.url) {
-    return message.reply('⚠️ Current track has no YouTube URL, autoplay cannot inspect it.');
+    return message.reply('Autoplay isn’t available for this track.');
   }
 
-  await message.reply(
-    `🔎 Finding autoplay candidate for **${formatTrackName(session.currentTrack)}**...`
-  );
+  await message.reply('Finding the next song…');
 
   const historyUrls = [
     ...(session.queue || []).map((t) => t.url).filter(Boolean),
@@ -755,20 +752,16 @@ async function handleAutoplayCommand(client, message) {
     });
   } catch (e) {
     console.error('[Autoplay Error]', e.stderr || e);
-    return message.reply('❌ Autoplay lookup failed.');
+    return message.reply('Couldn’t find the next track. Please try again.');
   }
 
   const selected = result.selected;
 
   if (!selected) {
-    return message.reply('❌ No reliable autoplay candidate found.');
+    return message.reply('No suitable next track found.');
   }
 
   const url = selected.track.webpage_url || selected.track.url;
-
-  await message.reply(
-    `✅ Autoplay selected:\n**${formatTrackName(selected.track)}**\nSource: ${selected.source}\nScore: ${selected.score}\n🔗 ${url}`
-  );
 
   message.content = `p ${url}`;
   client.emit('messageCreate', message);

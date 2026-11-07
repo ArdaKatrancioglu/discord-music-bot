@@ -44,8 +44,7 @@ async function handleCacheCommand(client, message, content) {
 
   if (message.guild) {
     const vc = message.member?.voice?.channel;
-    if (!vc)
-      return message.reply('⚠️ Where you at? Nowhere. Join a voice channel first you dumb fuck');
+    if (!vc) return message.reply('Join a voice channel first.');
 
     targetGuildId = vc.guild.id;
     targetChannelId = vc.id;
@@ -57,17 +56,14 @@ async function handleCacheCommand(client, message, content) {
   } else {
     const pref = getBoundVoiceTarget(message.author.id);
     if (!pref) {
-      return message.reply(
-        '⚠️ No voice channel is connected yet dumbass. Join a voice channel on a server and !bind it or run !cache there. ' +
-          '(Alternative: !use <guildId> <channelId> in DM)'
-      );
+      return message.reply('Link a voice channel with `!bind` on the server first.');
     }
     targetGuildId = pref.guildId;
     targetChannelId = pref.channelId;
   }
 
   const guild = client.guilds.cache.get(targetGuildId);
-  if (!guild) return message.reply('❌ Server not found (bot must be on that server).');
+  if (!guild) return message.reply('This server isn’t available.');
 
   const session = ensureSession(targetGuildId, targetChannelId, guild.voiceAdapterCreator);
   session.lastChannel = message.channel;
@@ -77,27 +73,22 @@ async function handleCacheCommand(client, message, content) {
   if (arg === 'off') {
     session.repeatCache = false;
     session.cachePool = [];
-    return message.reply('🛑 Cache loop disabled. (Queue remains the same)');
+    return message.reply('Library shuffle off.');
   }
 
   const all = listAllCachedTracksUnique();
-  if (!all.length)
-    return message.reply(
-      'ℹ️ There are no songs in the cache to play. Play some songs to cache it bitch. Jkjk'
-    );
+  if (!all.length) return message.reply('The library is empty. Play a song to add it.');
 
   if (!session.currentTrack) {
     await startCachePlayback(session, targetGuildId);
-    return message.reply(`🔁 Cache initialized. Number of parts: **${all.length}**`);
+    return message.reply('Shuffling the library.');
   } else {
     session.autoplay = false;
     require('./autoplaySchedulerService').clearAutoplayTimer(session);
     session.cachePool = all.map((track) => ({ ...track, source: 'cache' }));
     session.repeatCache = true;
     session.queue = shuffle([...session.cachePool]);
-    return message.reply(
-      `🔁 Cache (∞) is enabled. **${all.length}** tracks have been added to the queue and looping is on.`
-    );
+    return message.reply('Shuffling the library.');
   }
 }
 

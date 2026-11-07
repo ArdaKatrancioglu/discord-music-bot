@@ -93,12 +93,38 @@ function buildLyricsText(session) {
   if (session.lyricsStatus === 'plain' && session.lyricsPlainText) {
     return escapeMarkdown(session.lyricsPlainText).slice(0, 2600);
   }
-  if (session.lyricsStatus === 'loading') return 'Searching for synchronized lyrics…';
+  if (session.lyricsStatus === 'loading') return 'Loading lyrics…';
   if (session.lyricsStatus !== 'synced' || !session.lyricsLines?.length) {
-    return 'Synchronized lyrics are unavailable for this track.';
+    return 'Lyrics unavailable.';
   }
 
-  const activeIndex = findActiveLineIndex(session.lyricsLines, getLyricsPosition(session));
+  const position = getLyricsPosition(session);
+  const activeIndex = findActiveLineIndex(session.lyricsLines, position);
+  const activeLine = session.lyricsLines[activeIndex];
+  const nextLine = session.lyricsLines[activeIndex + 1];
+  const nextTime = nextLine?.timestamp ?? Number(session.currentTrack?.duration);
+  // Start-only lyrics cannot tell us when singing stops. Hold the line for
+  // ten seconds before marking a long interval as instrumental.
+  const explicitEnd = Number(activeLine?.end);
+  const lineEnd =
+    activeLine && explicitEnd > activeLine.timestamp && explicitEnd < nextTime
+      ? explicitEnd
+      : (activeLine?.timestamp ?? 0) + 10;
+  const instrumental = activeLine
+    ? Boolean(nextLine) &&
+      nextTime - activeLine.timestamp > 10 &&
+      position >= lineEnd &&
+      position < nextTime
+    : nextTime > 10;
+  if (instrumental) {
+    return [
+      activeLine ? `♪ ${escapeMarkdown(activeLine.text)}` : null,
+      '▶ **♪**',
+      nextLine ? `♪ ${escapeMarkdown(nextLine.text)}` : null
+    ]
+      .filter(Boolean)
+      .join('\n\n');
+  }
   const center = Math.max(0, activeIndex);
   const start = Math.max(0, center - 1);
   const end = Math.min(session.lyricsLines.length - 1, center + 1);
@@ -118,14 +144,15 @@ function buildPlayerPayload(session, { stopped = false } = {}) {
   const embed = new EmbedBuilder().setColor(disabled ? 0x747f8d : 0x5865f2);
 
   if (disabled) {
-    embed.setTitle('⏹ Playback stopped').setDescription('The player is ready for another track.');
+    embed.setTitle('Playback stopped').setDescription('Ready for the next track.');
   } else {
     const track = session.currentTrack;
-    const displayTitle = formatTrackName(track);
+    const identity = getDisplayIdentity(track);
+    const displayTitle = String(identity.title || track.title || 'Unknown track').trim();
     // Discord's embed title is already emphasized and links to the embed URL.
     // Avoid nested Markdown links, which can expose escapes in some clients.
     const title = displayTitle.slice(0, 256).replace(/[\uD800-\uDBFF]$/, '');
-    embed.setAuthor({ name: '🎵\u2003NOW PLAYING' }).setTitle(title);
+    embed.setTitle(title);
     try {
       const url = new URL(track.url);
       if (url.protocol === 'https:' || url.protocol === 'http:') embed.setURL(url.href);
@@ -133,12 +160,19 @@ function buildPlayerPayload(session, { stopped = false } = {}) {
       // Keep the title readable when a legacy track has no valid URL.
     }
     const description = [];
+    const artist = String(identity.artist || '').trim();
+    if (artist) {
+      const label = escapeMarkdown(artist);
+      // Keep the artist secondary to the song title while preserving its link.
+      const url = embed.data.url;
+      const linkUrl = url?.replace(/\(/g, '%28').replace(/\)/g, '%29');
+      description.push(linkUrl ? `*[${label}](${linkUrl})*` : `*${label}*`);
+    }
 
     const upNext = getUpNextTrack(session);
 
     const lyricsText = buildLyricsText(session);
     if (lyricsText) description.push(lyricsText);
-    description.push(`*Up Next: ${escapeMarkdown(formatTrackName(upNext))}*`);
 
     const position = getPlaybackPosition(session);
     const progress = buildProgressBar(position, track.duration);
@@ -146,16 +180,13 @@ function buildPlayerPayload(session, { stopped = false } = {}) {
     if (Number.isFinite(Number(session.volume))) {
       statusParts.push(`🔊 Volume: ${Math.round(Number(session.volume))}%`);
     }
-    const lyricsOffset = Number(track.lyricsOffset) || 0;
-    if (lyricsOffset !== 0) {
-      statusParts.push(`Offset: ${lyricsOffset >= 0 ? '+' : ''}${lyricsOffset}s`);
-    }
 
     embed.setDescription(description.join('\n\n'));
     embed.addFields({ name: '\u200b', value: progress });
     if (statusParts.length) {
       embed.addFields({ name: '\u200b', value: statusParts.join('  •  ') });
     }
+    if (upNext) embed.setFooter({ text: `Up Next: ${formatTrackName(upNext)}` });
     const artworkUrl = getArtworkUrl(track);
     if (artworkUrl) embed.setThumbnail(artworkUrl);
   }
@@ -163,7 +194,6 @@ function buildPlayerPayload(session, { stopped = false } = {}) {
   const pauseButton = new ButtonBuilder()
     .setCustomId(playerCustomId(session, 'pause'))
     .setStyle(ButtonStyle.Secondary)
-    .setEmoji(session.isPaused ? '▶️' : '⏸️')
     .setLabel(session.isPaused ? 'Resume' : 'Pause')
     .setDisabled(disabled);
 
@@ -172,7 +202,7 @@ function buildPlayerPayload(session, { stopped = false } = {}) {
     new ButtonBuilder()
       .setCustomId(playerCustomId(session, 'skip'))
       .setStyle(ButtonStyle.Secondary)
-      .setEmoji('⏭️')
+      .setLabel('Skip')
       .setDisabled(disabled)
   ];
   if (!disabled && session.lyricsEnabled) {
@@ -195,26 +225,22 @@ function buildPlayerPayload(session, { stopped = false } = {}) {
     new ButtonBuilder()
       .setCustomId(playerCustomId(session, 'stop'))
       .setStyle(ButtonStyle.Danger)
-      .setEmoji('⏹️')
       .setLabel('Stop')
       .setDisabled(disabled),
     new ButtonBuilder()
       .setCustomId(playerCustomId(session, 'repeat'))
       .setStyle(repeatActive ? ButtonStyle.Primary : ButtonStyle.Secondary)
-      .setEmoji('🔁')
       .setLabel('Repeat')
       .setDisabled(disabled),
     new ButtonBuilder()
       .setCustomId(playerCustomId(session, 'lyrics'))
       .setStyle(lyricsActive ? ButtonStyle.Primary : ButtonStyle.Secondary)
-      .setEmoji('📜')
       .setLabel('Lyrics')
       .setDisabled(disabled),
     new ButtonBuilder()
       .setCustomId(playerCustomId(session, 'cache'))
       .setStyle(ButtonStyle.Secondary)
-      .setEmoji('💾')
-      .setLabel('Cache')
+      .setLabel('Library')
       .setDisabled(!disabled)
   ];
   if (!session.repeatCache && session.currentTrack?.source !== 'cache') {
@@ -222,7 +248,6 @@ function buildPlayerPayload(session, { stopped = false } = {}) {
       new ButtonBuilder()
         .setCustomId(playerCustomId(session, 'autoplay'))
         .setStyle(session.autoplay ? ButtonStyle.Primary : ButtonStyle.Secondary)
-        .setEmoji('🤖')
         .setLabel('Autoplay')
         .setDisabled(disabled)
     );
@@ -424,17 +449,12 @@ async function handlePlayerInteraction(interaction) {
   if (!session) {
     await rejectInteraction(
       interaction,
-      action === 'cache'
-        ? 'Join a voice channel before starting cache playback.'
-        : 'This player session is no longer active.'
+      action === 'cache' ? 'Join a voice channel first.' : 'This player is no longer active.'
     );
     return true;
   }
   if (!(await userCanControl(interaction, session, guildId))) {
-    await rejectInteraction(
-      interaction,
-      'You need to be in the same voice channel to control the player.'
-    );
+    await rejectInteraction(interaction, 'Join the player’s voice channel to use its controls.');
     return true;
   }
 
@@ -480,8 +500,8 @@ async function handlePlayerInteraction(interaction) {
       await interaction.followUp({
         content:
           result.reason === 'empty'
-            ? 'There are no cached tracks available.'
-            : 'Stop the current track before starting cache playback.',
+            ? 'The library is empty. Play a song to add it.'
+            : 'Stop playback to shuffle the library.',
         flags: MessageFlags.Ephemeral
       });
     }

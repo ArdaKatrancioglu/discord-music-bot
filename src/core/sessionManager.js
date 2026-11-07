@@ -12,10 +12,7 @@ const {
   scheduleAutoplayCheck
 } = require('../services/autoplaySchedulerService');
 const { startLyricsWorker, stopLyricsWorker } = require('../services/lyricsService');
-const {
-  recordPlaybackEnd,
-  recordPlaybackStart
-} = require('../services/analyticsService');
+const { recordPlaybackEnd, recordPlaybackStart } = require('../services/analyticsService');
 
 const sessions = new Map();
 const retainedPlayerUis = new Map();
@@ -56,7 +53,7 @@ function scheduleIdleDisconnect(guildId, session) {
     retainPlayerUiState(guildId, activeSession);
 
     try {
-      await activeSession.lastChannel?.send('🛑 Idle for 2 minutes, disconnecting.');
+      await activeSession.lastChannel?.send('Disconnected after inactivity.');
     } catch {
       // The channel may have disappeared while the idle timer was pending.
     }
@@ -98,7 +95,7 @@ async function disconnectIfChannelEmpty(guildId, guild) {
   retainPlayerUiState(guildId, session);
 
   try {
-    await session.lastChannel?.send('👋 Ses kanalında kimse kalmadığı için kanaldan çıktım.');
+    await session.lastChannel?.send('Disconnected from the empty voice channel.');
   } catch {
     // Leaving the voice channel must continue even if the status message fails.
   }
@@ -253,7 +250,7 @@ async function playNext(guildId) {
 
     if (channel?.send) {
       try {
-        await channel.send('🛑 Queue is empty. Add more with !play <song or URL>');
+        await channel.send('Queue finished.');
       } catch {
         // Playback cleanup should not fail because the text channel is unavailable.
       }

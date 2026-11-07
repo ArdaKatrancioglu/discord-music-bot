@@ -7,12 +7,12 @@ module.exports = {
     const guildId = resolveGuildIdForBoundAwareCommand(message);
 
     if (!guildId) {
-      return message.reply('ℹ️ No track currently playing. Want some? Play it then dumbfuck.');
+      return message.reply('Nothing is playing.');
     }
 
     const session = sessions.get(guildId);
 
-    if (!session?.currentTrack) return message.reply('ℹ️ No track currently playing.');
+    if (!session?.currentTrack) return message.reply('Nothing is playing.');
     return startPlayerUi(session, message.channel);
   }
 };

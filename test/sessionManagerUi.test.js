@@ -16,7 +16,7 @@ test('voice-empty disconnect stops and retains the existing player panel', async
     channelId: 'text-channel-1',
     async edit(payload) {
       edits++;
-      assert.equal(payload.embeds[0].toJSON().title, '⏹ Playback stopped');
+      assert.equal(payload.embeds[0].toJSON().title, 'Playback stopped');
       return this;
     }
   };

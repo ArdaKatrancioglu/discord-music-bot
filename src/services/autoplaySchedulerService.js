@@ -1,4 +1,3 @@
-const { formatTrackName } = require('../utils/titleUtils');
 const { findNextAutoplayTrack } = require('./autoplayRuntimeService');
 
 function clearAutoplayTimer(session) {
@@ -41,31 +40,13 @@ function scheduleAutoplayCheck(client, message, guildId, session) {
     if (session.queue.length > 0) return;
 
     try {
-      if (session.lastChannel?.send) {
-        await session.lastChannel.send(
-          `🤖 Autoplay preparing next track based on **${formatTrackName(session.currentTrack)}**...`
-        );
-      }
-
       const next = await findNextAutoplayTrack(session);
 
       if (!next) {
         if (session.lastChannel?.send) {
-          await session.lastChannel.send('❌ Autoplay could not find a reliable next track.');
+          await session.lastChannel.send('No suitable next track found.');
         }
         return;
-      }
-
-      if (session.lastChannel?.send) {
-        await session.lastChannel.send(
-          `✅ Autoplay selected based on **${formatTrackName(next.referenceTrack)}**:\n` +
-            `**${formatTrackName(next)}**\n` +
-            `Source: ${next.source}\n` +
-            `Score: ${next.score}\n` +
-            `Recent similarity: ${next.maxRecentSimilarity?.toFixed(3) ?? 'n/a'} ` +
-            `(diversity penalty: ${next.diversityPenalty})\n` +
-            `🔗 ${next.url}`
-        );
       }
 
       message.content = `p ${next.url}`;
@@ -75,7 +56,7 @@ function scheduleAutoplayCheck(client, message, guildId, session) {
 
       if (session.lastChannel?.send) {
         try {
-          await session.lastChannel.send(`❌ Autoplay scheduler failed: ${err.message}`);
+          await session.lastChannel.send('Couldn’t continue autoplay. Please try again.');
         } catch {
           // The original notification failure has already been logged above.
         }

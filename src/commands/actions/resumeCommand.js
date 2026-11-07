@@ -7,13 +7,13 @@ module.exports = {
     const guildId = resolveGuildIdForBoundAwareCommand(message);
 
     if (!guildId) {
-      return message.reply('⚠️ There are no sessions.');
+      return message.reply('Nothing is playing.');
     }
 
     const session = sessions.get(guildId);
-    if (!session) return message.reply('⚠️ There are no sessions.');
+    if (!session) return message.reply('Nothing is playing.');
 
     resumeSession(session);
-    return message.reply('▶️ Resumed playback.');
+    return message.reply('Playing.');
   }
 };

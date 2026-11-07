@@ -562,7 +562,7 @@ async function runLyricsWorker(session, track, playbackGeneration, lyricsGenerat
     require('./playerUiService')
       .requestPlayerUpdate(session, { expectedPlaybackGeneration: playbackGeneration })
       .catch(() => {});
-    notifyLyricsUnavailable(session, 'No lyrics found — Bu parça için lyrics bulamadım.');
+    notifyLyricsUnavailable(session, 'Lyrics unavailable.');
     return;
   }
 

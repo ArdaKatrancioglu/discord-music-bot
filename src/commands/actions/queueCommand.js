@@ -7,17 +7,26 @@ module.exports = {
     const guildId = resolveGuildIdForBoundAwareCommand(message);
 
     if (!guildId) {
-      return message.reply('ℹ️ No queue (no connected voice channel found complete retard).');
+      return message.reply('Join a voice channel first.');
     }
 
     const session = sessions.get(guildId);
     if (!session || (!session.currentTrack && !session.queue.length)) {
-      return message.reply('ℹ️ Queue is empty.');
+      return message.reply('The queue is empty.');
     }
 
     const now = session.currentTrack ? `Now: **${formatTrackName(session.currentTrack)}**\n` : '';
-    const list = session.queue.map((t, i) => `${i + 1}. ${formatTrackName(t)}`).join('\n');
+    const list = session.queue
+      .slice(0, 15)
+      .map((t, i) => `${i + 1}. ${formatTrackName(t)}`)
+      .join('\n');
 
-    return message.reply(`🎶 ${now}Queue:\n${list || '(empty)'}`);
+    const remaining = session.queue.length - 15;
+    return message.reply(
+      `${now}${list ? `\n**Up next**\n${list}` : ''}${remaining > 0 ? `\n+${remaining} more` : ''}`.slice(
+        0,
+        1950
+      )
+    );
   }
 };

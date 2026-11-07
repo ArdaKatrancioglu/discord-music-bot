@@ -50,18 +50,25 @@ test('player payload uses a native linked title, lyrics, artwork and two rows', 
   const payload = buildPlayerPayload(createSession());
   const embed = payload.embeds[0].toJSON();
 
-  assert.equal(embed.author.name, '🎵\u2003NOW PLAYING');
-  assert.equal(embed.title, 'Song – Artist');
+  assert.equal(embed.author, undefined);
+  assert.equal(embed.title, 'Song');
   assert.equal(embed.url, 'https://www.youtube.com/watch?v=video-id');
-  assert.ok(embed.description.startsWith('♪ Previous'));
+  assert.ok(
+    embed.description.startsWith(
+      '*[Artist](https://www.youtube.com/watch?v=video-id)*\n\n♪ Previous'
+    )
+  );
   assert.doesNotMatch(embed.description, /\\-/);
   assert.match(embed.description, /♪ Previous/);
   assert.match(embed.description, /▶ \*\*Current\*\*/);
+  assert.ok(embed.description.includes('♪ Previous\n\n▶ **Current**\n\n♪ Next'));
   assert.match(embed.description, /♪ Next/);
   assert.doesNotMatch(embed.description, /Requested by:/);
+  assert.doesNotMatch(JSON.stringify(embed), /Offset:/);
   assert.doesNotMatch(embed.description, /-{3,}|—{3,}/);
   assert.doesNotMatch(embed.description, /\nAlbum\n/);
-  assert.ok(embed.description.endsWith('*Up Next: Next Song – Next Artist*'));
+  assert.doesNotMatch(embed.description, /Up Next:/);
+  assert.equal(embed.footer.text, 'Up Next: Next Artist – Next Song');
   assert.equal(embed.thumbnail.url, 'https://i.ytimg.com/vi/video-id/hqdefault.jpg');
   assert.equal(payload.components.length, 2);
   assert.deepEqual(
@@ -73,6 +80,8 @@ test('player payload uses a native linked title, lyrics, artwork and two rows', 
   );
   assert.ok(customIds.some((id) => id.endsWith(':autoplay')));
   assert.ok(customIds.every((id) => !id.endsWith(':previous')));
+  assert.equal(payload.components[0].components[1].data.label, 'Skip');
+  assert.ok(payload.components.flatMap((row) => row.components).every((button) => !button.data.emoji));
 });
 
 test('unchanged player payload does not edit the Discord message twice', async () => {
@@ -186,7 +195,7 @@ test('paused and stopped payloads expose the correct disabled controls', () => {
   assert.equal(paused.components[1].components[3].data.disabled, true);
 
   const stopped = buildPlayerPayload(createSession({ currentTrack: null }), { stopped: true });
-  assert.equal(stopped.embeds[0].toJSON().title, '⏹ Playback stopped');
+  assert.equal(stopped.embeds[0].toJSON().title, 'Playback stopped');
   assert.ok(stopped.components[0].components.every((button) => button.data.disabled));
   assert.ok(stopped.components[1].components.slice(0, 3).every((button) => button.data.disabled));
   assert.equal(stopped.components[1].components[3].data.disabled, false);
@@ -218,10 +227,10 @@ test('zero offset, hidden lyrics and cache playback omit irrelevant controls', (
   );
   const cacheJson = JSON.stringify(cachePlayback.components.map((row) => row.toJSON()));
   assert.doesNotMatch(cacheJson, /:autoplay/);
-  assert.doesNotMatch(cachePlayback.embeds[0].toJSON().fields[1].value, /Autoplay:/);
+  assert.doesNotMatch(JSON.stringify(cachePlayback.embeds[0].toJSON().fields), /Autoplay:/);
 });
 
-test('resolved tracks display a native linked Title – Artist without an escaped separator', () => {
+test('resolved tracks display a native linked song title with a separate italic artist link', () => {
   const currentTrack = {
     title: 'Yalan',
     artist: 'Edis',
@@ -242,17 +251,85 @@ test('resolved tracks display a native linked Title – Artist without an escape
     })
   );
   const embed = payload.embeds[0].toJSON();
-  assert.equal(embed.title, 'Yalan – Edis');
+  assert.equal(embed.title, 'Yalan');
   assert.equal(embed.url, 'https://youtube.com/watch?v=bpOSxM0rNPM');
+  assert.ok(embed.description.startsWith('*[Edis](https://youtube.com/watch?v=bpOSxM0rNPM)*\n\n'));
   assert.doesNotMatch(embed.title, /\\-|Official Video|Old video display/);
-  assert.ok(embed.description.includes('A documentary - Episode 2'));
+  assert.equal(embed.footer.text, 'Up Next: A documentary - Episode 2');
+});
+
+test('instrumental markers cover long intros and gaps without changing lyric timing', () => {
+  const lines = [
+    { timestamp: 15, text: 'First line' },
+    { timestamp: 40, text: 'Second line' },
+    { timestamp: 45, text: 'Third line' }
+  ];
+  const original = JSON.stringify(lines);
+  for (const [position, expected] of [
+    [0, '▶ **♪**\n\n♪ First line'],
+    [15, '▶ **First line**'],
+    [24, '▶ **First line**'],
+    [25, '♪ First line\n\n▶ **♪**\n\n♪ Second line'],
+    [39, '▶ **♪**'],
+    [40, '▶ **Second line**'],
+    [44, '▶ **Second line**']
+  ]) {
+    const session = createSession({
+      currentTrack: { title: 'Song', lyricsOffset: 0 },
+      lyricsLines: lines,
+      player: { state: { resource: { playbackDuration: position * 1000 } } }
+    });
+    assert.ok(buildPlayerPayload(session).embeds[0].toJSON().description.includes(expected));
+  }
+  assert.equal(JSON.stringify(lines), original);
+});
+
+test('instrumental gaps honor explicit line ends and lyric offsets', () => {
+  const session = createSession({
+    currentTrack: { title: 'Song', lyricsOffset: -4 },
+    lyricsLines: [
+      { timestamp: 0, end: 5, text: 'First' },
+      { timestamp: 20, text: 'Next' }
+    ],
+    player: { state: { resource: { playbackDuration: 8000 } } }
+  });
+  assert.match(buildPlayerPayload(session).embeds[0].toJSON().description, /▶ \*\*First\*\*/);
+  session.player.state.resource.playbackDuration = 9000;
+  assert.match(buildPlayerPayload(session).embeds[0].toJSON().description, /▶ \*\*♪\*\*/);
+});
+
+test('the final lyric remains active throughout a long outro', () => {
+  const session = createSession({
+    currentTrack: { title: 'Song', duration: 120, lyricsOffset: 0 },
+    lyricsLines: [{ timestamp: 15, end: 20, text: 'Last line' }],
+    player: { state: { resource: { playbackDuration: 90000 } } }
+  });
+  const embed = buildPlayerPayload(session).embeds[0].toJSON();
+  assert.match(embed.description, /▶ \*\*Last line\*\*/);
+  assert.doesNotMatch(embed.description, /▶ \*\*♪\*\*/);
+});
+
+test('empty queues omit Up Next while loop queues still show the next track', () => {
+  const empty = buildPlayerPayload(createSession({ queue: [] })).embeds[0].toJSON();
+  assert.doesNotMatch(empty.description, /Up Next|Queue empty/);
+  assert.equal(empty.footer, undefined);
+  const looping = buildPlayerPayload(
+    createSession({
+      queue: [],
+      looping: true,
+      loopIndex: 0,
+      loopQueue: [{ title: 'First' }, { title: 'Second' }]
+    })
+  ).embeds[0].toJSON();
+  assert.equal(looping.footer.text, 'Up Next: Second');
 });
 
 test('tracks without a URL retain a readable title', () => {
   const currentTrack = { title: 'Yalan', artist: 'Edis', videoTitle: 'Video', url: null };
   const embed = buildPlayerPayload(createSession({ currentTrack })).embeds[0].toJSON();
-  assert.equal(embed.title, 'Yalan – Edis');
+  assert.equal(embed.title, 'Yalan');
   assert.equal(embed.url, undefined);
+  assert.ok(embed.description.startsWith('*Edis*\n\n'));
 });
 
 test('parentheses in song names remain unchanged and the YouTube URL stays clickable', () => {
@@ -265,7 +342,7 @@ test('parentheses in song names remain unchanged and the YouTube URL stays click
   const session = createSession({ currentTrack });
   session.lyricsLines[1].text = 'A lyric (with parentheses)';
   const embed = buildPlayerPayload(session).embeds[0].toJSON();
-  assert.equal(embed.title, 'Zehir (feat. Pango) – manifest');
+  assert.equal(embed.title, 'Zehir (feat. Pango)');
   assert.equal(embed.url, currentTrack.url);
   assert.match(embed.description, /A lyric \(with parentheses\)/);
   assert.doesNotMatch(JSON.stringify(embed), /\\\\[()]/);

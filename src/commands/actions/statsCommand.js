@@ -1,6 +1,6 @@
 const { EmbedBuilder } = require('discord.js');
 const { latencyMonitor } = require('../../services/latencyService');
-const { analyticsPath, getAnalyticsSnapshot } = require('../../services/analyticsService');
+const { getAnalyticsSnapshot } = require('../../services/analyticsService');
 
 function percentage(part, total) {
   if (!total) return 'n/a';
@@ -73,7 +73,6 @@ module.exports = {
       }
     }
 
-    lines.push('', `Persistent JSON: ${analyticsPath}`);
     const snapshot = latencyMonitor.snapshot();
     const milliseconds = (value) => (value === null ? 'n/a' : `${value.toFixed(1)} ms`);
     const latency = new EmbedBuilder()

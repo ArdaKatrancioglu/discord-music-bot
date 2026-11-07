@@ -17,7 +17,7 @@ async function handleMessage(client, message) {
   } catch (err) {
     console.error('[messageCreate] Handler error:', err);
     try {
-      await message.reply('⚠️ An unexpected error occurred. What have you done?');
+      await message.reply('Something went wrong. Please try again.');
     } catch {
       // An unavailable text channel must not break command cleanup.
     }

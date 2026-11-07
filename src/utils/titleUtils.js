@@ -6,7 +6,7 @@ function formatTrackName(track) {
     track?.title || track?.videoTitle || track?.displayTitle || 'Unknown track'
   ).trim();
   const artist = String(track?.artist || '').trim();
-  return artist ? `${title} – ${artist}` : title;
+  return artist ? `${artist} – ${title}` : title;
 }
 
 function sanitizeTitle(title) {

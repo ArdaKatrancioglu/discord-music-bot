@@ -1,21 +1,20 @@
-const { formatTrackName } = require('../../utils/titleUtils');
 const { sessions } = require('../../core/sessionManager');
 const { resolveGuildIdForBoundAwareCommand } = require('../../services/messageContextService');
 const { requestPlayerUpdate } = require('../../services/playerUiService');
 
 module.exports = {
-  async execute({ client, message, content }) {
+  async execute({ message, content }) {
     const guildId = resolveGuildIdForBoundAwareCommand(message);
 
     if (!guildId) {
-      return message.reply('⚠️ There are no sessions.');
+      return message.reply('Nothing is playing.');
     }
 
     const session = sessions.get(guildId);
-    if (!session) return message.reply('⚠️ There are no sessions.');
+    if (!session) return message.reply('Nothing is playing.');
 
     if (!session.currentTrack) {
-      return message.reply('⚠️ Nothing is currently playing.');
+      return message.reply('Nothing is playing.');
     }
 
     let times = parseInt(content.slice(2).trim()) - 1; // Subtract 1 to account for the current track
@@ -26,7 +25,7 @@ module.exports = {
       session.loopQueue = [];
       session.loopIndex = 0;
       requestPlayerUpdate(session, { force: true }).catch(() => {});
-      return message.reply('➡️ Loop disabled.');
+      return message.reply('Repeat off.');
     }
 
     // Safety checks for loop count
@@ -34,7 +33,7 @@ module.exports = {
       times = 0; // Default to infinite loop if no valid number is provided
     }
     if (times < 0) {
-      return message.reply('⚠️ Invalid loop count. Please provide a non-negative integer.');
+      return message.reply('Use a positive number of tracks.');
     }
     if (times > 0 && times > session.queue.length) {
       times = session.queue.length;
@@ -44,18 +43,8 @@ module.exports = {
     session.loopQueue = [session.currentTrack, ...session.queue.slice(0, times)];
     session.loopIndex = 0;
     requestPlayerUpdate(session, { force: true }).catch(() => {});
-    await message.reply(`🔂 Loop enabled for ${session.loopQueue.length} tracks.`);
-    const previewTracks = session.loopQueue.slice(0, 5);
-    const remainingTracks = session.loopQueue.slice(5);
-    for (let i = 0; i < previewTracks.length; i++) {
-      const t = previewTracks[i];
-      await message.reply(
-        `${i === 0 ? '▶️' : '🔁'} ${i + 1}. **${formatTrackName(t)}**\n🔗 ${t.url || 'URL unknown'}`
-      );
-    }
-    if (remainingTracks.length > 0) {
-      const rest = remainingTracks.map((t, i) => `${i + 6}. ${formatTrackName(t)}`).join('\n');
-      await message.reply(`And ${remainingTracks.length} more track(s):\n${rest}`);
-    }
+    return message.reply(
+      `Repeat on · ${session.loopQueue.length} track${session.loopQueue.length === 1 ? '' : 's'}`
+    );
   }
 };

@@ -14,7 +14,7 @@ function startPlaylistFeeder(guildId, channel, list, pushFn, interval = 30000) {
 
   function tick() {
     if (state.index >= state.list.length) {
-      channel.send('🎵 Playlist finished.');
+      channel.send('Playlist added.');
       stopPlaylistFeeder(guildId);
       return;
     }

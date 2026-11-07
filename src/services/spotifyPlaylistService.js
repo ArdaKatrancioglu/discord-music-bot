@@ -20,35 +20,31 @@ async function handleSpotifyPlaylist(client, message, url) {
   const guildId = message.guild?.id;
 
   if (!guildId) {
-    return message.reply(
-      '⚠️ Spotify playlist importing currently needs to be started from a server voice channel.'
-    );
+    return message.reply('Start this playlist from a server voice channel.');
   }
 
   const vc = message.member?.voice?.channel;
   if (!vc) {
-    return message.reply('⚠️ Join a voice channel first.');
+    return message.reply('Join a voice channel first.');
   }
 
   stopSpotifyPlaylistFeeder(guildId);
 
-  await message.reply('⏳ Fetching Spotify playlist songs...');
+  await message.reply('Loading playlist…');
 
   let songs;
   try {
     songs = await getSpotifyPlaylistSongs(url);
   } catch (e) {
     console.error('[Spotify Playlist Error]', e);
-    return message.reply('❌ Failed to fetch Spotify playlist.');
+    return message.reply('Couldn’t load this playlist. Try another link.');
   }
 
   if (!songs.length) {
-    return message.reply('ℹ️ No songs found in Spotify playlist.');
+    return message.reply('This playlist is empty.');
   }
 
-  await message.reply(
-    `📜 Spotify playlist found. Tracks: **${songs.length}**\nAdding one track every **15 seconds**...`
-  );
+  await message.reply(`Playlist ready · ${songs.length} tracks`);
 
   const state = {
     songs,
@@ -60,8 +56,10 @@ async function handleSpotifyPlaylist(client, message, url) {
     if (state.index >= state.songs.length) {
       spotifyFeeders.delete(guildId);
       try {
-        await message.channel.send('✅ Spotify playlist feed finished.');
-      } catch {}
+        await message.channel.send('Playlist added.');
+      } catch {
+        // The playlist is complete even if its notification cannot be delivered.
+      }
       return;
     }
 
@@ -69,7 +67,6 @@ async function handleSpotifyPlaylist(client, message, url) {
     state.index++;
 
     try {
-      await message.channel.send(`➕ Spotify queue: **${query}**`);
       message.content = `p ${query}`;
       client.emit('messageCreate', message);
     } catch (err) {

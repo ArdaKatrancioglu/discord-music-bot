@@ -317,7 +317,7 @@ test('missing lyrics disables lyrics and responds ephemerally to the requesting 
     await session.lyricsTask;
     assert.equal(session.lyricsEnabled, false);
     assert.equal(notices.length, 1);
-    assert.match(notices[0].content, /No lyrics found/);
+    assert.equal(notices[0].content, 'Lyrics unavailable.');
   } finally {
     disableLyrics(session);
     global.fetch = originalFetch;

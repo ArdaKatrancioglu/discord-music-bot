@@ -20,8 +20,12 @@ test('new download immediately persists normalized metadata and queues the origi
     const session = {};
     let queued;
     let indexedTrack;
+    const replies = [];
+    const edits = [];
+    let deleted = 0;
+    let startedImmediately = false;
     mock('src/core/sessionManager.js', { ensureSession: () => session, userDefaultVC: new Map() });
-    mock('src/services/cacheService.js', { queueTrackIntoSession: (_s, _g, track) => { queued = track; return { startedImmediately: false }; } });
+    mock('src/services/cacheService.js', { queueTrackIntoSession: (_s, _g, track) => { queued = track; return { startedImmediately }; } });
     mock('src/services/cacheSearchService.js', { indexCachedTrack: async (track) => { indexedTrack = track; }, searchCachedMusic: async () => ({ track: null }) });
     mock('src/services/playlistService.js', { detectIfPlaylist: async () => false });
     mock('src/services/spotifyPlaylistService.js', { isSpotifyPlaylistUrl: () => false });
@@ -37,10 +41,25 @@ test('new download immediately persists normalized metadata and queues the origi
     mock('src/core/youtubeMusicMetadata.js', { ...music, YouTubeMusicResolver: class { async resolve() { return { title: 'Song', artist: 'Artist', album: 'Album', year: 2020, musicId: 'audio-track', artists: [{ name: 'Artist', id: 'UCartist' }], artworkUrl: null }; } } });
     const { handlePlayRequest } = require(path.join(root, 'src/services/playService.js'));
     const voice = { id: 'voice', guild: { id: 'guild' } };
-    const message = { guild: { id: 'guild' }, author: { id: 'user', username: 'User' }, member: { voice: { channel: voice } }, reply: async () => {} };
+    const message = { guild: { id: 'guild' }, author: { id: 'user', username: 'User' }, member: { voice: { channel: voice } }, reply: async (content) => {
+      replies.push(content);
+      return { edit: async (payload) => { edits.push(payload.content); }, delete: async () => { deleted++; } };
+    } };
     const client = { guilds: { cache: new Map([['guild', { voiceAdapterCreator: {} }]]) } };
     (async () => {
       await handlePlayRequest(client, message, 'https://youtube.com/watch?v=bpOSxM0rNPM');
+      assert.deepEqual(replies, ['Finding the track…']);
+      assert.deepEqual(edits, ['Preparing the track…', 'Added to queue · Artist – Song']);
+      replies.length = 0;
+      edits.length = 0;
+      await handlePlayRequest(client, message, 'https://youtube.com/watch?v=bpOSxM0rNPM');
+      assert.deepEqual(replies, ['Added to queue · Artist – Song']);
+      assert.equal(edits.length, 0);
+      replies.length = 0;
+      startedImmediately = true;
+      await handlePlayRequest(client, message, 'https://youtube.com/watch?v=bpOSxM0rNPM');
+      assert.equal(replies.length, 0);
+      assert.equal(deleted, 0);
       assert.equal(queued.title, 'Song');
       assert.equal(queued.artist, 'Artist');
       assert.equal(queued.id, 'bpOSxM0rNPM');

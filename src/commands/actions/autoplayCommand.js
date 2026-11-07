@@ -1,4 +1,3 @@
-const { formatTrackName } = require('../../utils/titleUtils');
 const { sessions } = require('../../core/sessionManager');
 const { resolveGuildIdForBoundAwareCommand } = require('../../services/messageContextService');
 const { findNextAutoplayTrack } = require('../../services/autoplayRuntimeService');
@@ -14,11 +13,11 @@ module.exports = {
     const guildId = resolveGuildIdForBoundAwareCommand(message);
 
     if (!guildId) {
-      return message.reply('⚠️ There are no sessions.');
+      return message.reply('Nothing is playing.');
     }
 
     const session = sessions.get(guildId);
-    if (!session) return message.reply('⚠️ There are no sessions.');
+    if (!session) return message.reply('Nothing is playing.');
 
     session.autoplayClient = client;
     session.autoplayMessage = message;
@@ -28,10 +27,10 @@ module.exports = {
 
     if (arg === 'now') {
       if (!session.currentTrack && !session.lastAutoplayReferenceTrack) {
-        return message.reply('⚠️ No reference track found for autoplay.');
+        return message.reply('Play a song before starting autoplay.');
       }
 
-      await message.reply('🔎 Autoplay searching now...');
+      await message.reply('Finding the next song…');
 
       let next;
 
@@ -39,17 +38,10 @@ module.exports = {
         next = await findNextAutoplayTrack(session);
       } catch (err) {
         console.error('[AutoplayCommand] ap now failed:', err);
-        return message.reply(`❌ Autoplay failed: ${err.message}`);
+        return message.reply('Couldn’t start autoplay. Please try again.');
       }
 
-      await message.reply(
-        `✅ Autoplay selected based on **${formatTrackName(next.referenceTrack)}**:\n` +
-          `**${formatTrackName(next)}**\n` +
-          `Source: ${next.source}\n` +
-          `Score: ${next.score}\n` +
-          `🔗 ${next.url}`
-      );
-
+      if (!next) return message.reply('No suitable next track found.');
       return handlePlayRequest(client, message, next.url);
     }
 
@@ -59,14 +51,11 @@ module.exports = {
       scheduleAutoplayCheck(client, message, guildId, session);
       requestPlayerUpdate(session, { force: true }).catch(() => {});
 
-      return message.reply(
-        '🤖 Autoplay enabled.\n' +
-          'I will add a new track when the queue is empty or the last track is close to ending.'
-      );
+      return message.reply('Autoplay on.');
     }
 
     clearAutoplayTimer(session);
     requestPlayerUpdate(session, { force: true }).catch(() => {});
-    return message.reply('➡️ Autoplay disabled.');
+    return message.reply('Autoplay off.');
   }
 };

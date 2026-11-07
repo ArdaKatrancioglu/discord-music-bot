@@ -1,7 +1,6 @@
 // playService.js
 
 const { performance } = require('perf_hooks');
-const { MessageFlags } = require('discord.js');
 const { sanitizeTitle, formatTrackName } = require('../utils/titleUtils');
 const {
   getTrackFromCache,
@@ -59,11 +58,18 @@ async function handlePlayRequest(client, message, query) {
     id: message.author.id,
     name: message.member?.displayName || message.author.globalName || message.author.username
   };
-  await message.reply(
-    queryIsUrl
-      ? { content: `🎵 Request: <${query}>`, flags: MessageFlags.SuppressEmbeds }
-      : `🎵 Request: ${query}`
-  );
+  let statusMessage;
+  async function respond(content) {
+    if (statusMessage?.edit) return statusMessage.edit({ content });
+    return message.reply(content);
+  }
+  async function finishStatus(startedImmediately, track) {
+    if (startedImmediately) {
+      await statusMessage?.delete?.().catch(() => {});
+    } else {
+      await respond(`Added to queue · ${formatTrackName(track)}`);
+    }
+  }
 
   if (isSpotifyPlaylistUrl(query)) {
     finishPlayRequest({ outcome: 'delegated', source: 'spotify-playlist' });
@@ -76,7 +82,7 @@ async function handlePlayRequest(client, message, query) {
     const vc = message.member?.voice?.channel;
     if (!vc) {
       finishPlayRequest({ outcome: 'failure', reason: 'no-voice-channel' });
-      return message.reply('⚠️ Where you at? Nowhere. Join a voice channel first you dumb fuck');
+      return message.reply('Join a voice channel first.');
     }
 
     targetGuildId = vc.guild.id;
@@ -90,10 +96,7 @@ async function handlePlayRequest(client, message, query) {
     const pref = getBoundVoiceTarget(message.author.id);
     if (!pref) {
       finishPlayRequest({ outcome: 'failure', reason: 'no-bound-voice-channel' });
-      return message.reply(
-        '⚠️ No voice channel is connected yet. Join a voice channel on a server and !bind it or run !play there. ' +
-          '(Alternative: !use <guildId> <channelId> in DM)'
-      );
+      return message.reply('Link a voice channel with `!bind` on the server first.');
     }
 
     targetGuildId = pref.guildId;
@@ -103,7 +106,7 @@ async function handlePlayRequest(client, message, query) {
   const guild = client.guilds.cache.get(targetGuildId);
   if (!guild) {
     finishPlayRequest({ outcome: 'failure', reason: 'guild-not-found' });
-    return message.reply('❌ Server not found (bot must be on that server).');
+    return message.reply('This server isn’t available.');
   }
 
   const session = ensureSession(targetGuildId, targetChannelId, guild.voiceAdapterCreator);
@@ -133,9 +136,7 @@ async function handlePlayRequest(client, message, query) {
     const result = queueTrackIntoSession(session, targetGuildId, track);
     recordCacheHit({ source: matchSource });
     finishPlayRequest({ outcome: 'success', source: 'cache' });
-    if (!result.startedImmediately) {
-      await message.reply(`🔄 Queued from cache: **${formatTrackName(track)}**`);
-    }
+    await finishStatus(result.startedImmediately, track);
     if (!queryIsUrl) repeatedQueries.markServed(message.author.id, query, track);
     return matchSource;
   }
@@ -146,7 +147,7 @@ async function handlePlayRequest(client, message, query) {
     const cachedById = getTrackFromCache({ id: urlVideoId });
     if (cachedById) {
       await useCachedTrack(cachedById, { matchSource: 'youtube-id' });
-      return message.reply('⏱ cache 0ms (YouTube ID match)');
+      return;
     }
   }
 
@@ -155,7 +156,6 @@ async function handlePlayRequest(client, message, query) {
       const isPlaylist = await detectIfPlaylist(query);
       if (isPlaylist) {
         finishPlayRequest({ outcome: 'delegated', source: 'youtube-playlist' });
-        await message.reply('📃 Playlist algılandı. Playlist moduna geçiyorum...');
         return handlePlaylist(client, message, query);
       }
     } catch (e) {
@@ -169,8 +169,7 @@ async function handlePlayRequest(client, message, query) {
       const cacheSearch = await searchCachedMusic(query, listAllCachedTracksUnique());
       if (cacheSearch.track) {
         await useCachedTrack(cacheSearch.track, { matchSource: cacheSearch.source });
-        const score = cacheSearch.score == null ? '' : `, score ${cacheSearch.score.toFixed(3)}`;
-        return message.reply(`⏱ cache hit (${cacheSearch.source}${score})`);
+        return;
       }
     } catch (error) {
       // An unavailable local search index must not break normal YouTube search.
@@ -178,9 +177,7 @@ async function handlePlayRequest(client, message, query) {
     }
   }
 
-  if (repeatState.shouldTryYouTubeAlternative) {
-    await message.reply('🔄 Same query again — trying a different YouTube result this time.');
-  }
+  statusMessage = await message.reply('Finding the track…');
 
   const t0 = performance.now();
   const input = queryIsUrl
@@ -215,31 +212,23 @@ async function handlePlayRequest(client, message, query) {
       classification: classifyMetadataError(e)
     });
     finishPlayRequest({ outcome: 'failure', reason: 'metadata-failed' });
-    return message.reply('⚠️ Metadata error: ' + e.message);
+    console.error('[Metadata Error]', e);
+    return respond('Couldn’t find this track. Try another title or link.');
   }
-  const t1 = performance.now();
 
   const id = meta.title;
   const title = meta.id;
   const url = meta.url;
   const titleSan = sanitizeTitle(title);
   const filenameTemplate = `${id}_${titleSan}.%(ext)s`;
-  const t2 = performance.now();
 
   const cached = getTrackFromCache({ id, titleSan });
   if (cached) {
     await useCachedTrack(cached, { meta });
-    return message.reply(
-      `⏱ meta ${(t1 - t0).toFixed(0)}ms, prep ${(t2 - t1).toFixed(0)}ms, cache 0ms`
-    );
+    return;
   }
 
-  const downloadTitle = meta.realTitle || title;
-  const linkedTitle = url ? `[${downloadTitle}](${url})` : `**${downloadTitle}**`;
-  await message.reply({
-    content: `⬇️ Downloading ${linkedTitle}`,
-    flags: MessageFlags.SuppressEmbeds
-  });
+  await respond('Preparing the track…');
   const dlStart = performance.now();
   const generationAtStart = session.downloadGeneration || 0;
 
@@ -249,18 +238,9 @@ async function handlePlayRequest(client, message, query) {
       titleSan,
       url,
       filenameTemplate,
-      onRetry: async ({ failedAttempt, nextStrategy, nextUseCookies, attemptNumber }) => {
-        const errorDetail = failedAttempt.message.slice(0, 1200).replaceAll('`', 'ˋ');
-        const diagnosis = failedAttempt.details.length
-          ? `\n**Diagnosis**\n${failedAttempt.details.map((detail) => `• ${detail}`).join('\n')}`
-          : '';
-        await message.reply(
-          `⚠️ Download attempt failed (code ${failedAttempt.code}, ${failedAttempt.classification}).\n` +
-            `\`\`\`${errorDetail}\`\`\`` +
-            diagnosis.slice(0, 1200) +
-            '\n' +
-            `Trying recovery #${attemptNumber}: **${nextStrategy}** (${nextUseCookies ? 'with cookies' : 'without cookies'})…`
-        );
+      onRetry: async ({ failedAttempt }) => {
+        console.warn('[Download Retry]', failedAttempt);
+        await respond('Taking a little longer. Trying again…');
       },
       onAttempt: (attempt) => {
         recordDownloadAttempt({
@@ -284,6 +264,7 @@ async function handlePlayRequest(client, message, query) {
 
     if ((session.downloadGeneration || 0) !== generationAtStart) {
       finishPlayRequest({ outcome: 'cancelled', reason: 'session-stopped-during-download' });
+      await statusMessage?.delete?.().catch(() => {});
       return;
     }
 
@@ -320,6 +301,7 @@ async function handlePlayRequest(client, message, query) {
 
     if ((session.downloadGeneration || 0) !== generationAtStart) {
       finishPlayRequest({ outcome: 'cancelled', reason: 'session-stopped-during-metadata' });
+      await statusMessage?.delete?.().catch(() => {});
       return;
     }
 
@@ -327,19 +309,7 @@ async function handlePlayRequest(client, message, query) {
     finishPlayRequest({ outcome: 'success', source: 'download' });
     if (!queryIsUrl) repeatedQueries.markServed(message.author.id, query, track);
 
-    if (!queueResult.startedImmediately) {
-      await message.reply(`🔄 Queued: **${formatTrackName(track)}**`);
-    }
-
-    const dlEnd = performance.now();
-    const t4 = performance.now();
-
-    await message.reply(
-      `⏱ meta ${(t1 - t0).toFixed(0)}ms, ` +
-        `prep ${(t2 - t1).toFixed(0)}ms, ` +
-        `download ${(dlEnd - dlStart).toFixed(0)}ms, ` +
-        `total ${(t4 - t0).toFixed(0)}ms`
-    );
+    await finishStatus(queueResult.startedImmediately, track);
   } catch (e) {
     recordDownloadPipeline({
       success: false,
@@ -356,13 +326,7 @@ async function handlePlayRequest(client, message, query) {
     console.error((e.stdoutData || '').trim());
     console.error('------------------');
 
-    const classification = e.classification ? `, ${e.classification}` : '';
-    await message.reply(
-      `❌ **Download failed after recovery attempts.** (code ${e.code}${classification})`
-    );
-    if (e.stderrData) {
-      await message.reply('```' + e.stderrData.slice(0, 1800) + '```');
-    }
+    await respond('Couldn’t play this track. Try another link.');
   }
 }
 

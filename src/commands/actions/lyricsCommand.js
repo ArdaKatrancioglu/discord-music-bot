@@ -8,15 +8,15 @@ module.exports = {
     const session = guildId ? sessions.get(guildId) : null;
 
     if (!session?.currentTrack) {
-      return message.reply('Şu anda çalan bir şarkı yok.');
+      return message.reply('Nothing is playing.');
     }
 
     if (session.lyricsEnabled) {
       disableLyrics(session);
-      return message.reply('Lyrics kapatıldı.');
+      return message.reply('Lyrics off.');
     }
 
     enableLyrics(session, message.channel);
-    return message.reply('Lyrics açıldı.');
+    return message.reply('Lyrics on.');
   }
 };
